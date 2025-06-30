@@ -4,6 +4,10 @@ This is the repository of the paper ***Privacy-Preserving Federal Embedding Lear
 
 FedE4RAG addresses data scarcity and privacy challenges in private RAG systems. It uses federated learning (FL) to collaboratively train client-side RAG retrieval models, keeping raw data localized. The framework employs knowledge distillation for effective server-client communication and homomorphic encryption to enhance parameter privacy. FedE4RAG aims to boost the performance of localized RAG retrievers by leveraging diverse client insights securely, balancing data utility and confidentiality, particularly demonstrated in sensitive domains like finance.
 
+## Hardware Requirements
+
+When training with a batch size of 16, a GPU with more than 80G of memory is required. However, in the federated training section of the paper, training was conducted using a single A40 GPU.
+
 ## Environment
 
 #### Upstream Embedding Learning Environment
