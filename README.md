@@ -42,8 +42,8 @@ pip install jury --no-deps
 We provide all datasets used in our experiments:
 
 - The all datasets used are [DocAILab/FedE4RAG_Dataset · Datasets at Hugging Face](https://huggingface.co/datasets/DocAILab/FedE4RAG_Dataset).
-- The datasets used for training are [train_data in DocAILab/FedE4RAG_Dataset](https://huggingface.co/datasets/DocAILab/FedE4RAG_Dataset/tree/main/train_data).
-- The downstream data for testing, specifically the test corpus file, is located on Hugging Face :[test_data in DocAILab/FedE4RAG_Dataset](https://huggingface.co/datasets/DocAILab/FedE4RAG_Dataset/tree/main/RAG4FIN).
+- The datasets used for training are [train_data in DocAILab/FedE4RAG_Dataset](https://huggingface.co/datasets/DocAILab/FedE4RAG_Dataset/tree/main/FEDE4FIN)).
+- The downstream data for testing, specifically the test corpus file, is located on Hugging Face: [test_data in DocAILab/FedE4RAG_Dataset](https://huggingface.co/datasets/DocAILab/FedE4RAG_Dataset/tree/main/RAG4FIN).
 
 ## Usage
 
