@@ -23,8 +23,8 @@ def get_documents():
         if len(documents) == 6066:
             break
     print("len(B):", len(documents))
-    # with open("/root/autodl-tmp/zh/ragx_old/data/data_100.json", 'r', encoding='utf-8') as file:
-    with open("/root/autodl-tmp/zh/ragx_old/data/data_50.json", 'r', encoding='utf-8') as file:
+    # with open("data/data_100.json", 'r', encoding='utf-8') as file:
+    with open("data/data_50.json", 'r', encoding='utf-8') as file:
         data = json.load(file)
         for entry in data:
             title = entry["other_info"]["doc_name"]
