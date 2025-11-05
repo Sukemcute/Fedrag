@@ -1,3 +1,5 @@
+# If you wish to use the CKKS encrypted version of fedrag, please replace the original fedrag.py with the content of this file.
+
 from datetime import datetime
 import os
 import torch
