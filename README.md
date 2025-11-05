@@ -8,7 +8,7 @@ FedE4RAG addresses data scarcity and privacy challenges in private RAG systems. 
 
 - **2025-11.05: Add the requirements.txt for downstream tasks.**
 
-- **2025-11.04: Add FedE/flgo/algorithm/fedrag-CKKS as the code of CKKS encrypted version for upstream training.**
+- **2025-11.04: Add FedE/flgo/algorithm/fedrag-CKKS as the code of CKKS encrypted version for upstream training. If you wish to use the CKKS encrypted version of fedrag, please replace the FedE/flgo/algorithm/fedrag.py with the content of FedE/flgo/algorithm/fedrag-CKKS.py.**
 
 ## Hardware Requirements
 
