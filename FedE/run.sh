@@ -4,11 +4,12 @@
 #SBATCH --gres=gpu:V100:4
 
 main_program="main.py"
-conda_env="/home/fedrag/env"
+conda_env="fedrag"
 log_folder="logs"
 dataset="law"
 current_time=$(date +'%Y-%m-%d_%H-%M-%S')
-. activate /home/fedrag/env  # For POSIX shell, we use `.` to activate conda environment
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate $conda_env
 mkdir -p $log_folder
 
 error_log="$log_folder/${current_time}_${dataset}_error.log"

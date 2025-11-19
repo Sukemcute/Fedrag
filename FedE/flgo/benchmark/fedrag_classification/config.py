@@ -15,5 +15,5 @@ tokenizer = None
 
 def get_model(*args, **kwargs) -> torch.nn.Module:
     # TODO 加载embedding模型 在largemodel
-    model = BertModel.from_pretrained('/path/to/bge-en')
+    model = BertModel.from_pretrained('BAAI/bge-base-en')
     return model

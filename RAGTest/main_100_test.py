@@ -72,7 +72,7 @@ index, hierarchical_storage_context = get_index(qa_dataset, cfg.persist_dir, spl
 print("index")
 
 query_engine = RetrieverQueryEngine(
-    retriever=get_retriver(cfg.retriever, index, hierarchical_storage_context=hierarchical_storage_context),
+    retriever=get_retriver(cfg.retriever, index, hierarchical_storage_context=hierarchical_storage_context, cfg=cfg),
     # todo: cfg.retriever
     response_synthesizer=response_synthesizer(0),
     node_postprocessors=[get_postprocessor(cfg)]

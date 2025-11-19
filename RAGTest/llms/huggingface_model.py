@@ -3,6 +3,7 @@ from functools import partial
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModel
 from transformers.generation.utils import GenerationConfig
+from transformers import BitsAndBytesConfig
 from llama_index.llms.huggingface import HuggingFaceLLM
 # pip install llama-index-llms-huggingface
 from config import Config
@@ -15,10 +16,78 @@ def llama_model_and_tokenizer(name, auth_token):
     # Create tokenizer
     tokenizer = AutoTokenizer.from_pretrained(name, token=auth_token)
 
+    # Create quantization config using BitsAndBytesConfig (new recommended way)
+    quantization_config = BitsAndBytesConfig(
+        load_in_8bit=True,
+    )
+
     # Create model
-    model = AutoModelForCausalLM.from_pretrained(name, token=auth_token, torch_dtype=torch.float16,
-                                                 rope_scaling={"type": "dynamic", "factor": 2},
-                                                 load_in_8bit=True, device_map="auto").eval()
+    # For quantized models, we need to prevent accelerate from calling .to()
+    # Solution: Patch the model's .to() method to handle quantized models gracefully
+    # and patch dispatch_model to catch the error
+    
+    from transformers import modeling_utils
+    from accelerate import big_modeling
+    
+    # Store original methods
+    original_to = modeling_utils.PreTrainedModel.to
+    original_dispatch = big_modeling.dispatch_model
+    
+    def safe_to(self, *args, **kwargs):
+        # Check if model is quantized
+        is_quantized = False
+        try:
+            for param in self.parameters():
+                if hasattr(param, 'quant_state'):
+                    is_quantized = True
+                    break
+            if not is_quantized and hasattr(self, 'config'):
+                if hasattr(self.config, 'quantization_config') and self.config.quantization_config is not None:
+                    is_quantized = True
+        except:
+            pass
+        
+        # If quantized, return self without moving (already on correct device)
+        if is_quantized:
+            return self
+        # Otherwise, use original .to() method
+        return original_to(self, *args, **kwargs)
+    
+    def safe_dispatch(model, device_map=None, **kwargs):
+        try:
+            return original_dispatch(model, device_map=device_map, **kwargs)
+        except ValueError as e:
+            # If error is about quantized model, return model as-is
+            if ".to" in str(e) and ("4-bit" in str(e) or "8-bit" in str(e)):
+                return model
+            raise
+    
+    # Apply patches
+    modeling_utils.PreTrainedModel.to = safe_to
+    big_modeling.dispatch_model = safe_dispatch
+    
+    try:
+        # Now load model - both .to() and dispatch_model are patched
+        # Do NOT use device_map with quantized models - bitsandbytes handles it
+        load_kwargs = {
+            "token": auth_token,
+            "torch_dtype": torch.float16,
+            "rope_scaling": {"type": "dynamic", "factor": 2},
+            "quantization_config": quantization_config,
+            "low_cpu_mem_usage": True
+        }
+        # Only add device_map if CUDA is available and patches are in place
+        # Actually, let's not use device_map at all for quantized models
+        model = AutoModelForCausalLM.from_pretrained(name, **load_kwargs)
+    finally:
+        # Restore original methods
+        modeling_utils.PreTrainedModel.to = original_to
+        big_modeling.dispatch_model = original_dispatch
+    
+    # For quantized models, bitsandbytes handles device placement automatically
+    # We cannot and should not call .to() on quantized models
+    # Just set to eval mode
+    model = model.eval()
 
     return tokenizer, model
 
@@ -188,26 +257,54 @@ completion_to_prompt_dict = {
 # }
 
 llm_argument_dict = {
-    "meta-llama/Llama-2-7b-chat-hf": {"context_window": 4096, "generate_kwargs": {"temperature": 0}},
-    "THUDM/chatglm3-6b": {"context_window": 4096, "generate_kwargs": {"temperature": 0, "eos_token_id": [2, 64795, 64797]}},
-    "Qwen/Qwen1.5-7B-Chat": {"context_window": 4096, "generate_kwargs": {"temperature": 0}},
-    "Qwen/Qwen1.5-7B-Chat-GPTQ-Int8": {"context_window": 4096, "generate_kwargs": {"temperature": 0}},
-    "baichuan-inc/Baichuan2-7B-Chat": {"context_window": 4096, "generate_kwargs": {"temperature": 0}},
-    "tiiuae/falcon-7b-instruct": {"context_window": 4096, "generate_kwargs": {"temperature": 0}},
-    "mosaicml/mpt-7b-chat": {"context_window": 4096, "generate_kwargs": {"temperature": 0}},
-    "01-ai/Yi-6B-Chat": {"context_window": 4096, "generate_kwargs": {"temperature": 0}},
+    "meta-llama/Llama-2-7b-chat-hf": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
+    "THUDM/chatglm3-6b": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0, "eos_token_id": [2, 64795, 64797]}},
+    "Qwen/Qwen1.5-7B-Chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
+    "Qwen/Qwen1.5-7B-Chat-GPTQ-Int8": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
+    "baichuan-inc/Baichuan2-7B-Chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
+    "tiiuae/falcon-7b-instruct": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
+    "mosaicml/mpt-7b-chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
+    "01-ai/Yi-6B-Chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
 }
 
 def get_huggingfacellm(name):
     print("name is " + name)
     tokenizer, model = tokenizer_and_model_fn_dict[name](name)
 
+    # Check if model is quantized (8-bit or 4-bit)
+    # Quantized models cannot be moved with .to(), so we don't pass device_map
+    # Check for quantization by looking at model config or parameter attributes
+    is_quantized = False
+    try:
+        # Check if model has quantization config
+        if hasattr(model, 'config') and hasattr(model.config, 'quantization_config'):
+            if model.config.quantization_config is not None:
+                is_quantized = True
+        # Check if any parameters are quantized (bitsandbytes adds quant_state)
+        if not is_quantized:
+            for param in model.parameters():
+                if hasattr(param, 'quant_state'):
+                    is_quantized = True
+                    break
+    except Exception:
+        # If check fails, assume not quantized
+        pass
+    
+    # For models loaded with load_in_8bit or load_in_4bit, device_map should not be passed to HuggingFaceLLM
+    # because the model is already on the correct device and cannot be moved
+    llm_kwargs = {
+        "context_window": llm_argument_dict[name]["context_window"],
+        "max_new_tokens": llm_argument_dict[name]["max_new_tokens"],
+        "completion_to_prompt": completion_to_prompt_dict[name],
+        "generate_kwargs": llm_argument_dict[name]["generate_kwargs"],
+        "model": model,
+        "tokenizer": tokenizer,
+    }
+    
+    # Only add device_map if model is not quantized
+    if not is_quantized:
+        llm_kwargs["device_map"] = "auto"
+    
     # Create a HF LLM using the llama index wrapper
-    llm = HuggingFaceLLM(context_window=llm_argument_dict[name]["context_window"],
-                         max_new_tokens=llm_argument_dict[name]["max_new_tokens"],
-                         completion_to_prompt=completion_to_prompt_dict[name],
-                         generate_kwargs=llm_argument_dict[name]["generate_kwargs"],
-                         model=model,
-                         tokenizer=tokenizer,
-                         device_map="auto", )
+    llm = HuggingFaceLLM(**llm_kwargs)
     return llm

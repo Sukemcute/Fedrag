@@ -766,7 +766,7 @@ class BasicClient(BasicParty):
         self.num_epochs = option['num_epochs']
         self.clip_grad = option['clip_grad']
         # TODO 模型路径
-        self.model = BertModel.from_pretrained('/path/to/bge-en')
+        self.model = BertModel.from_pretrained('BAAI/bge-base-en')
         print("!!!!!!!!!!!!!!!client model!!!!!!!!!!!!!!!!!!")
         print(type(self.model))
         self.test_batch_size = option['test_batch_size']

@@ -1,20 +1,20 @@
 [api_keys]
-api_key = 
+api_key = ""
 api_base = "https://api.gpt.ge/v1/"
-api_name = "deepseek-r1:7b"
+api_name = ""
 auth_token = 
 
 
 [settings]
-llm = "deepseek-r1:7b"
-embeddings = {embedding path}
+llm = "llama"
+embeddings = "embedding path"
 split_type = "sentence"
 chunk_size = 2048
 dataset = "json_download"
 source_dir = "../wiki"
 persist_dir = "storage"
-llamaIndexEvaluateModel = "Qwen/Qwen1.5-7B-Chat-GPTQ-Int8"
-deepEvalEvaluateModel = "Qwen/Qwen1.5-7B-Chat-GPTQ-Int8"
+llamaIndexEvaluateModel = "Qwen/Qwen1.5-7B-Chat"
+deepEvalEvaluateModel = "Qwen/Qwen1.5-7B-Chat"
 upTrainEvaluateModel = "qwen:7b-chat-v1.5-q8_0"
 evaluateApiName = ""
 evaluateApiKey = ""
