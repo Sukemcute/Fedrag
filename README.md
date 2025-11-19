@@ -5,6 +5,7 @@ This is the repository of the paper ***Privacy-Preserving Federal Embedding Lear
 FedE4RAG addresses data scarcity and privacy challenges in private RAG systems. It uses federated learning (FL) to collaboratively train client-side RAG retrieval models, keeping raw data localized. The framework employs knowledge distillation for effective server-client communication and homomorphic encryption to enhance parameter privacy. FedE4RAG aims to boost the performance of localized RAG retrievers by leveraging diverse client insights securely, balancing data utility and confidentiality, particularly demonstrated in sensitive domains like finance.
 
 ## Updates
+- **2025-11.19: Added a HyFedRAG-inspired Privacy-Aware Summary module (Presidio + Eraser4RAG + TenSEAL + optional Flower FL) for downstream pipelines.**
 - **2025-11.18: Add the retriever.py for downstream tasks.**
 
 - **2025-11.05: Add the requirements.txt for downstream tasks.**
@@ -77,6 +78,15 @@ bash run.sh
 
 - "The `bash.sh` and `bash1.sh` files provide scripts for directly evaluating your model.  You can use them by correctly filling in the path to your model within the scripts. The difference between them is that `bash1` additionally includes tests for the model's generation capabilities."
 - "The `main_100_test.py`, `main_50_test.py`, and `response.py` are the specific evaluation files. You can customize the evaluation metrics and output files you need within them."
+
+### Privacy-Aware Summary Module
+
+- Inspired by HyFedRAG, the downstream pipeline now inserts a `PrivacyAwareSummaryPostprocessor` (see `RAGTest/privacy/privacy_summary.py`) after retrieval and before LLM generation whenever `privacy.enable_privacy_summary = true` in `RAGTest/config.toml`.
+- The module chains Microsoft Presidio for industrial-grade PII detection/anonymization, an Eraser4RAG-style sentence-level sanitizer, TenSEAL CKKS encryption for sanitized payloads, and an optional Flower-powered federated aggregator to adapt privacy thresholds.
+- Install additional tooling with `pip install -r RAGTest/requirements.txt`, then download a spaCy English model once: `python -m spacy download en_core_web_sm`.
+- TenSEAL distributes wheels primarily for Linux/macOS. On Windows, use WSL2/conda-forge builds or disable encryption by setting `tenseal_enabled = false`.
+- Enable Flower feedback loops by setting `flower_enabled = true` and running the corresponding Flower server/clients; otherwise, the privacy thresholds remain static.
+- Sanitization metadata (PII density, removed sentences, encrypted payload handles) is attached to every retrieved node at `node.metadata["privacy_summary"]` so downstream evaluators or auditors can enforce additional policies.
 
 ## Citation
 
