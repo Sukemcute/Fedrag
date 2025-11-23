@@ -30,3 +30,21 @@ retriever = "Vector"
 retriever_mode = 0
 postprocess_rerank = "long_context_reorder"
 query_transform = "none"
+
+[privacy]
+enable_privacy_summary = true
+presidio_language = "en"
+presidio_entities = ["PERSON", "PHONE_NUMBER", "EMAIL_ADDRESS", "CREDIT_CARD", "LOCATION", "US_SSN"]
+eraser_risk_threshold = 0.45
+eraser_drop_high_risk = true
+eraser_preserve_sentences = 1
+eraser_keywords = ["password", "secret", "confidential", "credit card", "private"]
+tenseal_enabled = true
+tenseal_chunk_size = 256
+tenseal_poly_modulus_degree = 8192
+tenseal_coeff_mod_bit_sizes = [60, 40, 40, 60]
+tenseal_global_scale = 1099511627776.0
+flower_enabled = false
+flower_threshold_bounds = [0.35, 0.8]
+flower_weight = 1.0
+privacy_log_stats = true
