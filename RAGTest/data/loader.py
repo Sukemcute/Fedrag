@@ -8,7 +8,7 @@ cfg = Config()
 
 def get_documents():
     documents = []
-    with open("data/test_corpus.json", 'r', encoding='utf-8') as file:
+    with open("data/test_corpus_backup.json", 'r', encoding='utf-8') as file:
         data = json.load(file)
         
     for _, entry in data.items():

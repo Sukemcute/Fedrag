@@ -1,6 +1,7 @@
 from functools import partial
 
 import torch
+import types
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModel
 from transformers.generation.utils import GenerationConfig
 from transformers import BitsAndBytesConfig
@@ -68,14 +69,17 @@ def llama_model_and_tokenizer(name, auth_token):
     
     try:
         # Now load model - both .to() and dispatch_model are patched
-        # Do NOT use device_map with quantized models - bitsandbytes handles it
+        # When CUDA is available we still pass device_map="auto" so accelerate can shard the model
+        # The patched dispatch will absorb the known ValueError for 4/8 bit models
         load_kwargs = {
             "token": auth_token,
             "torch_dtype": torch.float16,
             "rope_scaling": {"type": "dynamic", "factor": 2},
             "quantization_config": quantization_config,
-            "low_cpu_mem_usage": True
+            "low_cpu_mem_usage": True,
         }
+        if torch.cuda.is_available():
+            load_kwargs["device_map"] = "auto"
         # Only add device_map if CUDA is available and patches are in place
         # Actually, let's not use device_map at all for quantized models
         model = AutoModelForCausalLM.from_pretrained(name, **load_kwargs)
@@ -88,6 +92,7 @@ def llama_model_and_tokenizer(name, auth_token):
     # We cannot and should not call .to() on quantized models
     # Just set to eval mode
     model = model.eval()
+    _patch_rotary_embeddings(model)
 
     return tokenizer, model
 
@@ -257,14 +262,14 @@ completion_to_prompt_dict = {
 # }
 
 llm_argument_dict = {
-    "meta-llama/Llama-2-7b-chat-hf": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
-    "THUDM/chatglm3-6b": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0, "eos_token_id": [2, 64795, 64797]}},
-    "Qwen/Qwen1.5-7B-Chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
-    "Qwen/Qwen1.5-7B-Chat-GPTQ-Int8": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
-    "baichuan-inc/Baichuan2-7B-Chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
-    "tiiuae/falcon-7b-instruct": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
-    "mosaicml/mpt-7b-chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
-    "01-ai/Yi-6B-Chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0}},
+    "meta-llama/Llama-2-7b-chat-hf": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0.7}},
+    "THUDM/chatglm3-6b": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0.7, "eos_token_id": [2, 64795, 64797]}},
+    "Qwen/Qwen1.5-7B-Chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0.7}},
+    "Qwen/Qwen1.5-7B-Chat-GPTQ-Int8": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0.7}},
+    "baichuan-inc/Baichuan2-7B-Chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0.7}},
+    "tiiuae/falcon-7b-instruct": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0.7}},
+    "mosaicml/mpt-7b-chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0.7}},
+    "01-ai/Yi-6B-Chat": {"context_window": 4096, "max_new_tokens": 256, "generate_kwargs": {"temperature": 0.7}},
 }
 
 def get_huggingfacellm(name):
@@ -308,3 +313,50 @@ def get_huggingfacellm(name):
     # Create a HF LLM using the llama index wrapper
     llm = HuggingFaceLLM(**llm_kwargs)
     return llm
+
+
+def _patch_rotary_embeddings(model):
+    try:
+        from transformers.models.llama.modeling_llama import (
+            LlamaRotaryEmbedding,
+            LlamaLinearScalingRotaryEmbedding,
+            LlamaDynamicNTKScalingRotaryEmbedding,
+        )
+    except ImportError:
+        return
+
+    rotary_classes = (
+        LlamaRotaryEmbedding,
+        LlamaLinearScalingRotaryEmbedding,
+        LlamaDynamicNTKScalingRotaryEmbedding,
+    )
+
+    for module in model.modules():
+        if isinstance(module, rotary_classes) and not getattr(module, "_device_patch_applied", False):
+            original_forward = module.forward
+
+            def patched_forward(self, x, *args, _orig_forward=original_forward, **kwargs):
+                target_device = x.device
+
+                # Ensure rotary buffers/bases are on the same device as the input
+                if hasattr(self, "inv_freq") and torch.is_tensor(self.inv_freq) and self.inv_freq.device != target_device:
+                    self.inv_freq = self.inv_freq.to(target_device)
+                if hasattr(self, "base") and torch.is_tensor(self.base) and self.base.device != target_device:
+                    self.base = self.base.to(target_device)
+                if hasattr(self, "cos_cached") and torch.is_tensor(self.cos_cached) and self.cos_cached.device != target_device:
+                    self.cos_cached = self.cos_cached.to(target_device)
+                if hasattr(self, "sin_cached") and torch.is_tensor(self.sin_cached) and self.sin_cached.device != target_device:
+                    self.sin_cached = self.sin_cached.to(target_device)
+
+                # move positional inputs if needed
+                if args:
+                    args = list(args)
+                    first_arg = args[0]
+                    if torch.is_tensor(first_arg) and first_arg.device != target_device:
+                        args[0] = first_arg.to(target_device)
+                    args = tuple(args)
+
+                return _orig_forward(x, *args, **kwargs)
+
+            module.forward = types.MethodType(patched_forward, module)
+            module._device_patch_applied = True

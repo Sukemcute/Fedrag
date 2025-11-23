@@ -2,7 +2,7 @@
 api_key = ""
 api_base = "https://api.gpt.ge/v1/"
 api_name = ""
-auth_token = 
+auth_token = ""
 
 
 [settings]

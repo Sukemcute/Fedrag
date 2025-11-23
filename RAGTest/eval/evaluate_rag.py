@@ -276,8 +276,6 @@ def NLGEvaluate(actual_responses, expect_answers):
         scores["perplexity"] = 0
     #
     score = scorer(predictions=predictions, references=[references])
-    rouge_types = ["rouge1”， “rouge2”, “rougeL”, “rougeLsum"]
-    chinese_tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
     scores["chrf"] = score["chrf"]["score"]
     scores["meteor"] = score["meteor"]["score"]
     # scores["bleu"] = score["bleu"]["score"]
@@ -288,10 +286,16 @@ def NLGEvaluate(actual_responses, expect_answers):
     scores["rouge_rougeLsum"] = score["rouge"]["rougeLsum"]
     scores["wer"] = score["wer"]["score"]
     scores["cer"] = score["cer"]["score"]
-    scorer = rouge_scorer.RougeScorer(rouge_types=rouge_types, use_stemmer=False, tokenizer=chinese_tokenizer)
     rouge_types = ["rouge1", "rouge2", "rougeL", "rougeLsum"]
-    chinese_tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
-    scorer = rouge_scorer.RougeScorer(rouge_types=rouge_types, use_stemmer=False, tokenizer=chinese_tokenizer)
+    bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+    try:
+        scorer = rouge_scorer.RougeScorer(
+            rouge_types=rouge_types, use_stemmer=False, tokenizer=bert_tokenizer
+        )
+    except TypeError:
+        scorer = rouge_scorer.RougeScorer(
+            rouge_types=rouge_types, use_stemmer=False
+        )
     rouge_get = scorer.score(target=expect_answers, prediction=actual_responses)
     scores["rouge_rouge1"] = rouge_get["rouge1"][2]
     scores["rouge_rouge2"] = rouge_get["rouge2"][2]
