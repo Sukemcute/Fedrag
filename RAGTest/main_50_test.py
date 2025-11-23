@@ -13,7 +13,7 @@ from eval.evaluate_TGT import evaluating_TGT
 from eval.evaluate_TRT import evaluating_TRT
 from eval.EvalModelAgent import EvalModelAgent
 from process.postprocess_rerank import get_postprocessor
-from privacy import get_privacy_postprocessors
+from privacy import apply_privacy_to_response
 from process.query_transform import transform_and_query
 import random
 import numpy as np
@@ -66,7 +66,6 @@ index, hierarchical_storage_context = get_index(qa_dataset, cfg.persist_dir, spl
 print("index")
 
 node_postprocessors = [get_postprocessor(cfg)]
-node_postprocessors.extend(get_privacy_postprocessors(cfg))
 
 query_engine = RetrieverQueryEngine(
 

@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
-from llama_index.core.schema import Node, NodeWithScore, QueryBundle, TextNode
+from llama_index.core.schema import Node, NodeWithScore, QueryBundle, TextNode, Response
 
 LOGGER = logging.getLogger(__name__)
 
@@ -712,14 +712,215 @@ class PrivacyAwareSummaryPostprocessor(BaseNodePostprocessor):
                 LOGGER.debug("Updated eraser risk threshold via Flower: %s", new_threshold)
 
 
+class PrivacyAwareResponsePostprocessor:
+    """Postprocessor for LLM response text after generation."""
+    
+    def __init__(self, cfg: PrivacySummaryConfig):
+        self.cfg = cfg
+        self.presidio = PresidioSanitizer(cfg) if cfg.enable else None
+        self.eraser = Eraser4RAGSanitizer(cfg) if cfg.enable else None
+        self.encryptor = TenSEALEncryptor(cfg) if cfg.enable else None
+        self.aggregator = FlowerPrivacyAggregator(cfg) if cfg.enable else None
+        self._metrics_buffer: List[Dict[str, float]] = []
+    
+    def postprocess_response(
+        self, 
+        response: Response, 
+        query_text: Optional[str] = None
+    ) -> Tuple[Response, Dict[str, Any]]:
+        """
+        Postprocess LLM response to protect privacy.
+        
+        Args:
+            response: LLM Response object
+            query_text: Original query text (for context-aware sanitization)
+        
+        Returns:
+            Tuple of (processed_response, privacy_metadata)
+        """
+        if not self.cfg.enable:
+            return response, {}
+        
+        original_text = response.response if hasattr(response, 'response') else str(response)
+        
+        # Step 1: Presidio Analysis
+        analysis = (
+            self.presidio.analyze(original_text)
+            if self.presidio is not None
+            else {"results": [], "normalized": []}
+        )
+        
+        # Step 2: Eraser4RAG Sanitization
+        sanitized_text = original_text
+        eraser_meta = {
+            "removed_count": 0,
+            "kept_count": 1,
+            "average_risk": 0.0,
+            "max_risk": 0.0,
+            "removed_sentences": [],
+        }
+        if self.eraser is not None:
+            sanitized_text, eraser_meta = self.eraser.sanitize(
+                original_text, query_text, analysis.get("normalized", [])
+            )
+        
+        # Step 3: Presidio Anonymization
+        anonymized_text = sanitized_text
+        if self.presidio is not None:
+            anonymized_text, _ = self.presidio.anonymize(sanitized_text, analysis)
+        
+        # Step 4: TenSEAL Encryption (optional)
+        encrypted_payload = (
+            self.encryptor.encrypt(anonymized_text)
+            if self.encryptor is not None
+            else None
+        )
+        
+        # Step 5: Build Privacy Metadata
+        privacy_metadata = self._build_privacy_metadata(
+            original_text=original_text,
+            sanitized_text=sanitized_text,
+            anonymized_text=anonymized_text,
+            analysis=analysis,
+            eraser_meta=eraser_meta,
+            encrypted_payload=encrypted_payload,
+        )
+        
+        # Step 6: Update Response
+        processed_response = deepcopy(response)
+        # Update response text
+        if hasattr(processed_response, 'response'):
+            processed_response.response = anonymized_text
+        elif hasattr(processed_response, 'message') and hasattr(processed_response.message, 'content'):
+            # For ChatResponse objects
+            processed_response.message.content = anonymized_text
+        
+        # Add privacy metadata to response
+        if not hasattr(processed_response, 'metadata') or processed_response.metadata is None:
+            processed_response.metadata = {}
+        if isinstance(processed_response.metadata, dict):
+            processed_response.metadata["privacy_summary"] = privacy_metadata
+        else:
+            # If metadata is not a dict, create new dict
+            processed_response.metadata = {"privacy_summary": privacy_metadata}
+        
+        # Log stats
+        if self.cfg.log_stats:
+            LOGGER.debug(
+                "Privacy-aware response postprocessing stats: %s",
+                {
+                    "pii_count": len(analysis.get("normalized", [])),
+                    "removed_count": eraser_meta.get("removed_count", 0),
+                    "encryption": encrypted_payload is not None,
+                },
+            )
+        
+        # Update metrics buffer for Flower aggregation
+        self._metrics_buffer.append(
+            {
+                "pii_density": privacy_metadata["pii_density"],
+                "removal_ratio": privacy_metadata["removal_ratio"],
+                "average_risk": privacy_metadata["eraser"]["average_risk"],
+                "weight": float(len(anonymized_text)),
+            }
+        )
+        
+        self._maybe_update_threshold()
+        
+        return processed_response, privacy_metadata
+    
+    def _build_privacy_metadata(
+        self,
+        original_text: str,
+        sanitized_text: str,
+        anonymized_text: str,
+        analysis: Dict[str, Any],
+        eraser_meta: Dict[str, Any],
+        encrypted_payload: Optional[str],
+    ) -> Dict[str, Any]:
+        """Build privacy metadata (reuse from PrivacyAwareSummaryPostprocessor)."""
+        pii_items = analysis.get("normalized", [])
+        pii_chars = sum(item["end"] - item["start"] for item in pii_items)
+        pii_density = (
+            pii_chars / max(1, len(original_text)) if original_text else 0.0
+        )
+        removal_ratio = (
+            eraser_meta.get("removed_count", 0)
+            / max(1, eraser_meta.get("removed_count", 0) + eraser_meta.get("kept_count", 0))
+        )
+
+        return {
+            "pii_entities": [
+                {
+                    "entity_type": item["entity_type"],
+                    "score": item.get("score"),
+                }
+                for item in pii_items
+            ],
+            "pii_density": float(pii_density),
+            "removal_ratio": float(removal_ratio),
+            "original_characters": len(original_text),
+            "sanitized_characters": len(sanitized_text),
+            "anonymized_characters": len(anonymized_text),
+            "eraser": eraser_meta,
+            "encryption": {
+                "enabled": encrypted_payload is not None,
+                "payload": encrypted_payload,
+            },
+        }
+    
+    def _maybe_update_threshold(self) -> None:
+        """Update risk threshold via Flower aggregation."""
+        if self.aggregator is None or not self._metrics_buffer:
+            return
+        new_threshold = self.aggregator.aggregate(self._metrics_buffer)
+        self._metrics_buffer = []
+        if self.eraser is not None:
+            self.eraser.update_threshold(new_threshold)
+            if self.cfg.log_stats:
+                LOGGER.debug("Updated eraser risk threshold via Flower: %s", new_threshold)
+
+
 def get_privacy_postprocessors(cfg: Any) -> List[BaseNodePostprocessor]:
-    """Factory for privacy-aware postprocessors given the global config."""
+    """Factory for privacy-aware postprocessors given the global config.
+    
+    NOTE: This function now returns empty list as privacy is applied to response, not nodes.
+    Use get_privacy_response_postprocessor() instead.
+    """
+    # Privacy is now applied to response, not nodes
+    return []
+
+
+def get_privacy_response_postprocessor(cfg: Any) -> Optional[PrivacyAwareResponsePostprocessor]:
+    """Factory for privacy-aware response postprocessor."""
     privacy_cfg_dict = getattr(cfg, "privacy", None)
     if isinstance(privacy_cfg_dict, dict):
         privacy_cfg = PrivacySummaryConfig.from_dict(privacy_cfg_dict)
     else:
         privacy_cfg = PrivacySummaryConfig()
     if not privacy_cfg.enable:
-        return []
-    return [PrivacyAwareSummaryPostprocessor(privacy_cfg)]
+        return None
+    return PrivacyAwareResponsePostprocessor(privacy_cfg)
+
+
+def apply_privacy_to_response(
+    response: Response, 
+    query_text: Optional[str], 
+    cfg: Any
+) -> Tuple[Response, Dict[str, Any]]:
+    """
+    Helper function to apply privacy protection to LLM response.
+    
+    Args:
+        response: LLM Response object
+        query_text: Original query text
+        cfg: Config object
+    
+    Returns:
+        Tuple of (processed_response, privacy_metadata)
+    """
+    postprocessor = get_privacy_response_postprocessor(cfg)
+    if postprocessor is None:
+        return response, {}
+    return postprocessor.postprocess_response(response, query_text)
 

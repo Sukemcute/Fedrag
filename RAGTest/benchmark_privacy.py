@@ -15,7 +15,7 @@ from config import Config
 from index import get_index
 from retriever import get_retriver, response_synthesizer
 from process.postprocess_rerank import get_postprocessor
-from privacy.privacy_summary import get_privacy_postprocessors
+from privacy import apply_privacy_to_response
 from data.qa_loader import get_qa_dataset
 from llms.llm import get_llm
 from embs.embedding import get_embedding
@@ -65,14 +65,13 @@ def benchmark_query_engine(query_engine, queries: List[str], expected_answers: L
             nlg_score = NLGEvaluate(response.response, expected)
             nlg_scores_list.append(nlg_score)
             
-            # Privacy metadata
-            if response.source_nodes:
-                for node in response.source_nodes:
-                    if "privacy_summary" in node.metadata:
-                        privacy_meta = node.metadata["privacy_summary"]
-                        pii_counts.append(privacy_meta.get("pii_count", 0))
-                        removed_counts.append(privacy_meta.get("eraser_removed_count", 0))
-                        risk_scores.append(privacy_meta.get("eraser_average_risk", 0.0))
+            # Apply privacy if enabled
+            if privacy_enabled:
+                response, privacy_meta = apply_privacy_to_response(response, query, cfg)
+                if privacy_meta:
+                    pii_counts.append(len(privacy_meta.get("pii_entities", [])))
+                    removed_counts.append(privacy_meta.get("eraser", {}).get("removed_count", 0))
+                    risk_scores.append(privacy_meta.get("eraser", {}).get("average_risk", 0.0))
             
             results["successful_queries"] += 1
             
@@ -145,15 +144,20 @@ def run_benchmark():
     logger.info("Test 1: WITHOUT Privacy Module")
     logger.info("=" * 80)
     
-    cfg.enable_privacy_summary = False
-    query_engine_no_privacy = RetrieverQueryEngine(
+    # Test 1: WITHOUT privacy module (same query engine, privacy not applied)
+    query_engine = RetrieverQueryEngine(
         retriever=get_retriver(cfg.retriever, index, hierarchical_storage_context=hierarchical_storage_context, cfg=cfg),
         response_synthesizer=response_synthesizer(0),
         node_postprocessors=[get_postprocessor(cfg)]
     )
     
+    # Temporarily disable privacy
+    original_privacy_enabled = getattr(cfg, 'privacy', {}).get('enable_privacy_summary', False) if hasattr(cfg, 'privacy') else False
+    if hasattr(cfg, 'privacy'):
+        cfg.privacy['enable_privacy_summary'] = False
+    
     results_no_privacy = benchmark_query_engine(
-        query_engine_no_privacy, queries, expected_answers, privacy_enabled=False
+        query_engine, queries, expected_answers, privacy_enabled=False
     )
     
     # Test 2: WITH privacy module
@@ -161,18 +165,12 @@ def run_benchmark():
     logger.info("Test 2: WITH Privacy Module")
     logger.info("=" * 80)
     
-    cfg.enable_privacy_summary = True
-    node_postprocessors = [get_postprocessor(cfg)]
-    node_postprocessors.extend(get_privacy_postprocessors(cfg))
-    
-    query_engine_with_privacy = RetrieverQueryEngine(
-        retriever=get_retriver(cfg.retriever, index, hierarchical_storage_context=hierarchical_storage_context, cfg=cfg),
-        response_synthesizer=response_synthesizer(0),
-        node_postprocessors=node_postprocessors
-    )
+    # Re-enable privacy
+    if hasattr(cfg, 'privacy'):
+        cfg.privacy['enable_privacy_summary'] = True
     
     results_with_privacy = benchmark_query_engine(
-        query_engine_with_privacy, queries, expected_answers, privacy_enabled=True
+        query_engine, queries, expected_answers, privacy_enabled=True
     )
     
     # Compare results

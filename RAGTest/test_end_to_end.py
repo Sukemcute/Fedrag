@@ -15,7 +15,7 @@ from config import Config
 from index import get_index
 from retriever import get_retriver, response_synthesizer
 from process.postprocess_rerank import get_postprocessor
-from privacy.privacy_summary import get_privacy_postprocessors
+from privacy import apply_privacy_to_response
 from data.qa_loader import get_qa_dataset
 from llms.llm import get_llm
 from embs.embedding import get_embedding
@@ -63,11 +63,9 @@ def test_end_to_end_pipeline():
     )
     logger.info(f"Index built with {len(qa_dataset)} documents")
     
-    # Step 4: Setup query engine with privacy module
-    logger.info("\n[Step 4] Setting up query engine with privacy protection...")
+    # Step 4: Setup query engine (privacy will be applied to response after generation)
+    logger.info("\n[Step 4] Setting up query engine...")
     node_postprocessors = [get_postprocessor(cfg)]
-    privacy_postprocessors = get_privacy_postprocessors(cfg)
-    node_postprocessors.extend(privacy_postprocessors)
     
     query_engine = RetrieverQueryEngine(
         retriever=get_retriver(
@@ -80,9 +78,8 @@ def test_end_to_end_pipeline():
         node_postprocessors=node_postprocessors
     )
     
-    privacy_enabled = cfg.enable_privacy_summary if hasattr(cfg, 'enable_privacy_summary') else False
-    logger.info(f"Privacy module enabled: {privacy_enabled}")
-    logger.info(f"Total postprocessors: {len(node_postprocessors)}")
+    privacy_enabled = getattr(cfg, 'privacy', {}).get('enable_privacy_summary', False) if hasattr(cfg, 'privacy') else False
+    logger.info(f"Privacy module enabled: {privacy_enabled} (applied to response after LLM generation)")
     
     # Step 5: Test queries
     logger.info("\n[Step 5] Testing queries...")
@@ -99,18 +96,20 @@ def test_end_to_end_pipeline():
         
         try:
             response = query_engine.query(query)
+            
+            # Apply privacy protection to response (after LLM generation)
+            response, privacy_metadata = apply_privacy_to_response(response, query, cfg)
+            
             logger.info(f"Response: {response.response[:200]}...")  # First 200 chars
             
             # Check privacy metadata
-            if response.source_nodes:
-                for j, node in enumerate(response.source_nodes[:1]):  # Check first node
-                    if "privacy_summary" in node.metadata:
-                        privacy_meta = node.metadata["privacy_summary"]
-                        logger.info(f"Privacy metadata on node {j}:")
-                        logger.info(f"  - PII detected: {privacy_meta.get('pii_count', 0)}")
-                        logger.info(f"  - Sentences removed: {privacy_meta.get('eraser_removed_count', 0)}")
-                        logger.info(f"  - Average risk: {privacy_meta.get('eraser_average_risk', 0.0):.3f}")
-                        logger.info(f"  - Encrypted: {privacy_meta.get('tenseal_encrypted', False)}")
+            if privacy_metadata:
+                logger.info(f"Privacy metadata on response:")
+                logger.info(f"  - PII detected: {len(privacy_metadata.get('pii_entities', []))}")
+                logger.info(f"  - PII density: {privacy_metadata.get('pii_density', 0.0):.3f}")
+                logger.info(f"  - Sentences removed: {privacy_metadata.get('eraser', {}).get('removed_count', 0)}")
+                logger.info(f"  - Average risk: {privacy_metadata.get('eraser', {}).get('average_risk', 0.0):.3f}")
+                logger.info(f"  - Encrypted: {privacy_metadata.get('encryption', {}).get('enabled', False)}")
         except Exception as e:
             logger.error(f"Error processing query: {e}", exc_info=True)
     
