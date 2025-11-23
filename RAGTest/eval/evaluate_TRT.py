@@ -146,7 +146,11 @@ class EvaluationResult_TRT:
                 if key == 'n':
                     f.writelines(f"{key}: {value}\n")
                 else:
-                    f.writelines(f"{key}: {value / self.results['n']}\n")
+                    # Kiểm tra n > 0 để tránh ZeroDivisionError
+                    if self.results.get('n', 0) > 0:
+                        f.writelines(f"{key}: {value / self.results['n']}\n")
+                    else:
+                        f.writelines(f"{key}: 0 (no valid results)\n")
         for key, value in self.metrics_results.items():
             if key in self.metrics:
                 if value['count'] == 0:

@@ -19,6 +19,7 @@ from process.query_transform import transform_and_query
 import random
 import numpy as np
 import torch
+import traceback
 
 
 def seed_everything(seed):
@@ -292,6 +293,7 @@ for question, expected_answer, golden_context, golden_context_ids, question_type
         continue
     except Exception as e:
         print(f"发生其他错误: {e}")
+        traceback.print_exc()
         continue
     # 返回node节点
     retrieval_ids = []
