@@ -20,6 +20,7 @@ import random
 import numpy as np
 import torch
 import traceback
+from embs.tfidf import TFIDFEmbedding
 
 
 def seed_everything(seed):
