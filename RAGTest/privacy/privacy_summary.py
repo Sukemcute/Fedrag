@@ -92,6 +92,9 @@ class PrivacySummaryConfig:
     federated_weight: float = 1.0
     passthrough_entities: List[str] = field(default_factory=list)
     log_stats: bool = True
+    # Mask all detected entities with entity type tags (e.g., <MONEY>, <DATE>)
+    mask_all_entities: bool = False
+    use_entity_type_tags: bool = True  # Use <ENTITY_TYPE> instead of <REDACTED>
 
     @classmethod
     def from_dict(cls, raw_cfg: Optional[Dict[str, Any]]) -> "PrivacySummaryConfig":
@@ -116,6 +119,8 @@ class PrivacySummaryConfig:
             "flower_weight": "federated_weight",
             "privacy_log_stats": "log_stats",
             "privacy_passthrough_entities": "passthrough_entities",
+            "mask_all_entities": "mask_all_entities",
+            "use_entity_type_tags": "use_entity_type_tags",
         }
 
         cfg_dict = {}
@@ -212,10 +217,13 @@ class PresidioSanitizer:
 
         if self.available and self.analyzer is not None:
             try:
+                # If mask_all_entities is True, detect ALL entities (not just allowed_entities)
+                entities_to_detect = None if self.cfg.mask_all_entities else (self.cfg.allowed_entities or None)
+                
                 raw_results = self.analyzer.analyze(
                     text=text,
                     language=self.cfg.language,
-                    entities=self.cfg.allowed_entities or None,
+                    entities=entities_to_detect,
                     return_decision_process=False,
                 )
             except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -255,10 +263,15 @@ class PresidioSanitizer:
                 
                 if entity_type in self.cfg.passthrough_entities:
                     continue
-                if placeholder_template:
+                
+                # Use entity type tags if enabled, otherwise use placeholder
+                if self.cfg.use_entity_type_tags:
+                    placeholder = f"<{entity_type}>"
+                elif placeholder_template:
                     placeholder = placeholder_template
                 else:
                     placeholder = f"<{entity_type}>"
+                
                 operators[entity_type] = {"type": "replace", "new_value": placeholder}
 
             try:
@@ -351,7 +364,13 @@ class PresidioSanitizer:
                 continue
             start = res["start"] + offset
             end = res["end"] + offset
-            placeholder = self.cfg.anonymizer_placeholder
+            
+            # Use entity type tags if enabled, otherwise use placeholder
+            if self.cfg.use_entity_type_tags:
+                placeholder = f"<{res['entity_type']}>"
+            else:
+                placeholder = self.cfg.anonymizer_placeholder
+            
             masked_text = (
                 masked_text[:start] + placeholder + masked_text[end:]
             )

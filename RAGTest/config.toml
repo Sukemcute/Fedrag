@@ -34,7 +34,7 @@ query_transform = "none"
 [privacy]
 enable_privacy_summary = true
 presidio_language = "en"
-presidio_entities = ["PERSON", "PHONE_NUMBER", "EMAIL_ADDRESS", "CREDIT_CARD", "LOCATION", "US_SSN"]
+presidio_entities = ["PERSON", "PHONE_NUMBER", "EMAIL_ADDRESS", "CREDIT_CARD", "LOCATION", "US_SSN", "DATE", "MONEY"]
 eraser_risk_threshold = 0.45
 eraser_drop_high_risk = true
 eraser_preserve_sentences = 1
@@ -48,6 +48,8 @@ flower_enabled = true
 flower_threshold_bounds = [0.35, 0.8]
 flower_weight = 1.0
 privacy_log_stats = true
+mask_all_entities = true  
+use_entity_type_tags = true 
 # Save protected responses to file
 save_protected_responses = true  # Set to true to save responses
 protected_responses_dir = "./privacy_responses"  # Directory to save files

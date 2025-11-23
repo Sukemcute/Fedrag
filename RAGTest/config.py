@@ -13,7 +13,11 @@ class Config:
             cls._instance.config = toml.load(config_file_path)  # Load the config only once
 
             # Dynamically set attributes based on TOML config
+            # Support both flattened and nested access
             for section, values in cls._instance.config.items():
+                # Set nested section as dict (e.g., cfg.privacy)
+                setattr(cls._instance, section, values)
+                # Also flatten keys for backward compatibility (e.g., cfg.enable_privacy_summary)
                 for key, value in values.items():
                     setattr(cls._instance, key, value)
 
