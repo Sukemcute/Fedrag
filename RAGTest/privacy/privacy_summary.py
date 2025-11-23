@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
-from llama_index.core.schema import Node, NodeWithScore, QueryBundle, TextNode, Response
+from llama_index.core.schema import Node, NodeWithScore, QueryBundle, TextNode
 
 LOGGER = logging.getLogger(__name__)
 
@@ -725,9 +725,9 @@ class PrivacyAwareResponsePostprocessor:
     
     def postprocess_response(
         self, 
-        response: Response, 
+        response: Any, 
         query_text: Optional[str] = None
-    ) -> Tuple[Response, Dict[str, Any]]:
+    ) -> Tuple[Any, Dict[str, Any]]:
         """
         Postprocess LLM response to protect privacy.
         
@@ -904,10 +904,10 @@ def get_privacy_response_postprocessor(cfg: Any) -> Optional[PrivacyAwareRespons
 
 
 def apply_privacy_to_response(
-    response: Response, 
+    response: Any, 
     query_text: Optional[str], 
     cfg: Any
-) -> Tuple[Response, Dict[str, Any]]:
+) -> Tuple[Any, Dict[str, Any]]:
     """
     Helper function to apply privacy protection to LLM response.
     
