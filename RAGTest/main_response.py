@@ -1,6 +1,15 @@
 import os
+import logging
 
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+
+# Setup logging for privacy module
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+privacy_logger = logging.getLogger('privacy.privacy_summary')
+privacy_logger.setLevel(logging.INFO)
 
 from llama_index.core import Settings, PromptTemplate
 from llms.llm import get_llm
@@ -22,6 +31,7 @@ import numpy as np
 import torch
 import traceback
 from embs.tfidf import TFIDFEmbedding
+from save_privacy_responses import save_privacy_response
 
 
 def seed_everything(seed):
@@ -289,7 +299,32 @@ for question, expected_answer, golden_context, golden_context_ids, question_type
         response = transform_and_query(question, cfg, query_engine)
         
         # Apply privacy protection to LLM response (after generation)
+        original_response_text = response.response  # Lưu response gốc trước khi bảo vệ
         response, privacy_metadata = apply_privacy_to_response(response, question, cfg)
+        
+        # Log privacy stats if enabled
+        if privacy_metadata and cfg.privacy.get('privacy_log_stats', False):
+            print(f"[Privacy] PII detected: {len(privacy_metadata.get('pii_entities', []))}")
+            print(f"[Privacy] PII density: {privacy_metadata.get('pii_density', 0.0):.3f}")
+            print(f"[Privacy] Sentences removed: {privacy_metadata.get('eraser', {}).get('removed_count', 0)}")
+        
+        # Save protected response to file (if enabled in config)
+        if hasattr(cfg, 'privacy') and cfg.privacy.get('save_protected_responses', False):
+            try:
+                output_dir = cfg.privacy.get('protected_responses_dir', './privacy_responses')
+                format_type = cfg.privacy.get('protected_responses_format', 'json')
+                saved_path = save_privacy_response(
+                    question=question,
+                    original_response=original_response_text,
+                    protected_response=response.response,
+                    privacy_metadata=privacy_metadata,
+                    output_dir=output_dir,
+                    format=format_type
+                )
+                if all_num % 10 == 0:  # Log mỗi 10 responses
+                    print(f"[Privacy] Saved protected response to: {saved_path}")
+            except Exception as e:
+                print(f"[Privacy] Warning: Failed to save protected response: {e}")
         
         actual_response = response.response
         response = response.source_nodes

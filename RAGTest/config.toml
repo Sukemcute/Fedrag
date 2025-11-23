@@ -48,3 +48,7 @@ flower_enabled = true
 flower_threshold_bounds = [0.35, 0.8]
 flower_weight = 1.0
 privacy_log_stats = true
+# Save protected responses to file
+save_protected_responses = true  # Set to true to save responses
+protected_responses_dir = "./privacy_responses"  # Directory to save files
+protected_responses_format = "json"  # "json" or "txt"

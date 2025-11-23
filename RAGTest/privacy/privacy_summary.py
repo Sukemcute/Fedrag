@@ -244,8 +244,15 @@ class PresidioSanitizer:
                 if self.cfg.anonymizer_policy == "replace"
                 else None
             )
+            
+            # Build operators dict
             for res in raw_results:
-                entity_type = getattr(res, "entity_type", "DEFAULT")
+                # Handle both RecognizerResult objects and dicts
+                if isinstance(res, dict):
+                    entity_type = res.get("entity_type", "DEFAULT")
+                else:
+                    entity_type = getattr(res, "entity_type", "DEFAULT")
+                
                 if entity_type in self.cfg.passthrough_entities:
                     continue
                 if placeholder_template:
@@ -255,9 +262,36 @@ class PresidioSanitizer:
                 operators[entity_type] = {"type": "replace", "new_value": placeholder}
 
             try:
+                # Ensure raw_results is a list of RecognizerResult objects, not dicts
+                analyzer_results = []
+                for res in raw_results:
+                    if isinstance(res, dict):
+                        # Convert dict to RecognizerResult if possible
+                        if self._recognizer_result_cls is not None:
+                            try:
+                                analyzer_results.append(
+                                    self._recognizer_result_cls(
+                                        entity_type=res.get("entity_type", "DEFAULT"),
+                                        start=res.get("start", 0),
+                                        end=res.get("end", 0),
+                                        score=res.get("score", 0.0)
+                                    )
+                                )
+                            except Exception:
+                                # If conversion fails, skip this result
+                                continue
+                        else:
+                            continue
+                    else:
+                        analyzer_results.append(res)
+                
+                if not analyzer_results:
+                    # If no valid results, use fallback
+                    return self._fallback_anonymize(text, normalized)
+                
                 result = self.anonymizer.anonymize(
                     text=text,
-                    analyzer_results=raw_results,
+                    analyzer_results=analyzer_results,
                     operators=operators or {
                         "DEFAULT": {
                             "type": "replace",
