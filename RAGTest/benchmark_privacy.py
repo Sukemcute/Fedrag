@@ -124,7 +124,18 @@ def run_benchmark():
     logger.info(f"Testing on {test_size} queries")
     
     # Setup embeddings and LLM
-    embeddings = get_embedding(cfg.embeddings)
+    # Check if embeddings path is valid (placeholder or invalid)
+    if not cfg.embeddings or cfg.embeddings.strip() == "" or cfg.embeddings == "embedding path":
+        logger.warning(f"Invalid embeddings path: '{cfg.embeddings}'")
+        logger.warning("Using default embedding model: BAAI/bge-base-en-v1.5")
+        logger.warning("To use custom model, set 'embeddings' in config.toml to a valid path or HuggingFace model ID")
+        embeddings = get_embedding("BAAI/bge-base-en")
+    else:
+        # Check if it's a local path that doesn't exist
+        if "/" not in cfg.embeddings and not os.path.exists(cfg.embeddings):
+            logger.warning(f"Local path not found: '{cfg.embeddings}'")
+            logger.warning("Trying as HuggingFace model ID...")
+        embeddings = get_embedding(cfg.embeddings)
     llm = get_llm(cfg.llm)
     Settings.llm = llm
     Settings.embed_model = embeddings
