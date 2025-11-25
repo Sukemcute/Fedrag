@@ -45,6 +45,7 @@ fastapi
 uvicorn
 pydantic
 httpx==0.27.2
+requests>=2.31.0
 # Privacy-aware summary dependencies
 presidio-analyzer>=2.2.300
 presidio-anonymizer>=2.2.300
