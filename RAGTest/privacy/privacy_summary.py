@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import logging
 import math
@@ -42,6 +44,53 @@ def _lazy_import_flower():
         return weighted_average
     except Exception as exc:  # pylint: disable=broad-exception-caught
         LOGGER.warning("Flower is not available: %s", exc)
+        return None
+
+
+def _lazy_import_transformers():
+    try:
+        from transformers import (
+            AutoModelForTokenClassification,
+            AutoTokenizer,
+            pipeline,
+        )
+        return AutoModelForTokenClassification, AutoTokenizer, pipeline
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        LOGGER.warning("Transformers is not available: %s", exc)
+        return None, None, None
+
+
+def _load_ner_model(cfg: PrivacySummaryConfig):
+    """Load NER model from HuggingFace model path."""
+    if not cfg.ner_model_path:
+        return None
+    
+    AutoModelForTokenClassification, AutoTokenizer, pipeline_func = _lazy_import_transformers()
+    if pipeline_func is None:
+        LOGGER.warning("Transformers not available, cannot load NER model")
+        return None
+    
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            cfg.ner_model_path, 
+            use_fast=cfg.ner_use_fast_tokenizer
+        )
+        model = AutoModelForTokenClassification.from_pretrained(cfg.ner_model_path)
+        
+        # Build pipeline kwargs
+        pipeline_kwargs = {
+            "model": model,
+            "tokenizer": tokenizer,
+            "aggregation_strategy": cfg.ner_aggregation_strategy,
+        }
+        if cfg.ner_model_device is not None:
+            pipeline_kwargs["device"] = cfg.ner_model_device
+        
+        ner_pipeline = pipeline_func("token-classification", **pipeline_kwargs)
+        LOGGER.info("NER model loaded successfully from %s", cfg.ner_model_path)
+        return ner_pipeline
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        LOGGER.warning("Failed to load NER model from %s: %s", cfg.ner_model_path, exc)
         return None
 
 
@@ -95,6 +144,11 @@ class PrivacySummaryConfig:
     # Mask all detected entities with entity type tags (e.g., <MONEY>, <DATE>)
     mask_all_entities: bool = False
     use_entity_type_tags: bool = True  # Use <ENTITY_TYPE> instead of <REDACTED>
+    # NER model configuration
+    ner_model_path: Optional[str] = None  # Path to HuggingFace NER model
+    ner_model_device: Optional[int] = None  # GPU device ID (0, 1, etc.) or None for CPU
+    ner_use_fast_tokenizer: bool = True  # Use fast tokenizer
+    ner_aggregation_strategy: str = "simple"  # Aggregation strategy for pipeline
 
     @classmethod
     def from_dict(cls, raw_cfg: Optional[Dict[str, Any]]) -> "PrivacySummaryConfig":
@@ -121,6 +175,10 @@ class PrivacySummaryConfig:
             "privacy_passthrough_entities": "passthrough_entities",
             "mask_all_entities": "mask_all_entities",
             "use_entity_type_tags": "use_entity_type_tags",
+            "ner_model_path": "ner_model_path",
+            "ner_model_device": "ner_model_device",
+            "ner_use_fast_tokenizer": "ner_use_fast_tokenizer",
+            "ner_aggregation_strategy": "ner_aggregation_strategy",
         }
 
         cfg_dict = {}
@@ -378,6 +436,124 @@ class PresidioSanitizer:
             replacements.append(res)
         return masked_text, replacements
 
+class NER_Model_Sanitizer:
+    """NER sanitizer: mask detected entities using a custom NER model (no fallback)."""
+
+    def __init__(self, cfg, model=None):
+        """
+        cfg: configuration object with attributes:
+            - mask_all_entities
+            - allowed_entities
+            - passthrough_entities
+            - anonymizer_placeholder
+            - use_entity_type_tags
+        model: a loaded NER model (e.g., spaCy or HuggingFace pipeline)
+        """
+        self.cfg = cfg
+        self.model = model
+        self.available = model is not None
+
+    def analyze(self, text: str) -> Dict[str, Any]:
+        """Run NER model and return normalized results."""
+        if not text.strip() or not self.available:
+            return {"results": [], "normalized": []}
+
+        try:
+            results = self._model_analyze(text)
+            normalized = self._normalize_results(results)
+            return {"results": results, "normalized": normalized}
+        except Exception as exc:
+            LOGGER.warning("NER analyze failed: %s", exc)
+            return {"results": [], "normalized": []}
+
+    def _model_analyze(self, text: str) -> List[Dict[str, Any]]:
+        """Run the NER model and extract entities."""
+        results = []
+
+        if hasattr(self.model, "__call__"):
+            ner_results = self.model(text)
+            for ent in ner_results:
+                # Handle HuggingFace pipeline format: entity_group, word, score, start, end
+                if isinstance(ent, dict):
+                    # Pipeline format: entity_group is the entity type
+                    entity_type = ent.get("entity_group") or ent.get("label")
+                    start = ent.get("start")
+                    end = ent.get("end")
+                    score = ent.get("score")
+                    word = ent.get("word")  # For logging/debugging
+                else:
+                    # Fallback for other formats (e.g., spaCy)
+                    entity_type = getattr(ent, "label_", None) or getattr(ent, "entity_type", None)
+                    start = getattr(ent, "start_char", None) or getattr(ent, "start", None)
+                    end = getattr(ent, "end_char", None) or getattr(ent, "end", None)
+                    score = getattr(ent, "score", None)
+                    word = getattr(ent, "word", None) or getattr(ent, "text", None)
+                
+                if entity_type is None or start is None or end is None:
+                    continue
+                
+                # Filter by allowed_entities if mask_all_entities is False
+                if not self.cfg.mask_all_entities and self.cfg.allowed_entities:
+                    if entity_type not in self.cfg.allowed_entities:
+                        continue
+                
+                results.append({
+                    "entity_type": entity_type,
+                    "start": int(start),
+                    "end": int(end),
+                    "score": float(score) if score is not None else None,
+                    "word": word,  # Store word for reference
+                })
+        return results
+
+    def anonymize(self, text: str, analysis: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
+        """Mask entities in the text based on analysis."""
+        if not text.strip():
+            return text, []
+
+        results = analysis.get("normalized", [])
+        if not results:
+            return text, []
+
+        masked_text = text
+        offset = 0
+        replacements: List[Dict[str, Any]] = []
+
+        for res in sorted(results, key=lambda x: x["start"]):
+            if res["entity_type"] in self.cfg.passthrough_entities:
+                continue
+
+            start = res["start"] + offset
+            end = res["end"] + offset
+
+            if self.cfg.use_entity_type_tags:
+                placeholder = f"<{res['entity_type']}>"
+            else:
+                placeholder = self.cfg.anonymizer_placeholder
+
+            masked_text = masked_text[:start] + placeholder + masked_text[end:]
+            offset += len(placeholder) - (res["end"] - res["start"])
+            replacements.append(res)
+
+        return masked_text, replacements
+
+    def _normalize_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Normalize results to a standard dict format."""
+        normalized = []
+        for res in results:
+            entity_type = res.get("entity_type")
+            start = res.get("start")
+            end = res.get("end")
+            score = res.get("score", None)
+            if entity_type is None or start is None or end is None:
+                continue
+            normalized.append({
+                "entity_type": entity_type,
+                "start": int(start),
+                "end": int(end),
+                "score": float(score) if score is not None else None
+            })
+        return normalized
 
 class Eraser4RAGSanitizer:
     """Context-aware sanitization inspired by Eraser4RAG."""
@@ -617,6 +793,9 @@ class PrivacyAwareSummaryPostprocessor(BaseNodePostprocessor):
         super().__init__()
         self.cfg = cfg
         self.presidio = PresidioSanitizer(cfg) if cfg.enable else None
+        # Load NER model if configured
+        ner_model = _load_ner_model(cfg) if cfg.enable and cfg.ner_model_path else None
+        self.masking = NER_Model_Sanitizer(cfg, model=ner_model) if cfg.enable else None
         self.eraser = Eraser4RAGSanitizer(cfg) if cfg.enable else None
         self.encryptor = TenSEALEncryptor(cfg) if cfg.enable else None
         self.aggregator = FlowerPrivacyAggregator(cfg) if cfg.enable else None
@@ -635,11 +814,13 @@ class PrivacyAwareSummaryPostprocessor(BaseNodePostprocessor):
             node = node_with_score.node
             original_text = node.get_content()
 
-            analysis = (
-                self.presidio.analyze(original_text)
-                if self.presidio is not None
-                else {"results": [], "normalized": []}
-            )
+            # Use NER model if available, otherwise fall back to Presidio
+            if self.masking is not None and self.masking.available:
+                analysis = self.masking.analyze(original_text)
+            elif self.presidio is not None:
+                analysis = self.presidio.analyze(original_text)
+            else:
+                analysis = {"results": [], "normalized": []}
 
             sanitized_text = original_text
             eraser_meta = {
@@ -654,8 +835,11 @@ class PrivacyAwareSummaryPostprocessor(BaseNodePostprocessor):
                     original_text, query_text, analysis.get("normalized", [])
                 )
 
+            # Use NER model for anonymization if available, otherwise use Presidio
             anonymized_text = sanitized_text
-            if self.presidio is not None:
+            if self.masking is not None and self.masking.available:
+                anonymized_text, _ = self.masking.anonymize(sanitized_text, analysis)
+            elif self.presidio is not None:
                 anonymized_text, _ = self.presidio.anonymize(sanitized_text, analysis)
 
             encrypted_payload = (
@@ -771,6 +955,9 @@ class PrivacyAwareResponsePostprocessor:
     def __init__(self, cfg: PrivacySummaryConfig):
         self.cfg = cfg
         self.presidio = PresidioSanitizer(cfg) if cfg.enable else None
+        # Load NER model if configured
+        ner_model = _load_ner_model(cfg) if cfg.enable and cfg.ner_model_path else None
+        self.masking = NER_Model_Sanitizer(cfg, model=ner_model) if cfg.enable else None
         self.eraser = Eraser4RAGSanitizer(cfg) if cfg.enable else None
         self.encryptor = TenSEALEncryptor(cfg) if cfg.enable else None
         self.aggregator = FlowerPrivacyAggregator(cfg) if cfg.enable else None
@@ -796,12 +983,13 @@ class PrivacyAwareResponsePostprocessor:
         
         original_text = response.response if hasattr(response, 'response') else str(response)
         
-        # Step 1: Presidio Analysis
-        analysis = (
-            self.presidio.analyze(original_text)
-            if self.presidio is not None
-            else {"results": [], "normalized": []}
-        )
+        # Step 1: Use NER model if available, otherwise use Presidio Analysis
+        if self.masking is not None and self.masking.available:
+            analysis = self.masking.analyze(original_text)
+        elif self.presidio is not None:
+            analysis = self.presidio.analyze(original_text)
+        else:
+            analysis = {"results": [], "normalized": []}
         
         # Step 2: Eraser4RAG Sanitization
         sanitized_text = original_text
@@ -817,9 +1005,11 @@ class PrivacyAwareResponsePostprocessor:
                 original_text, query_text, analysis.get("normalized", [])
             )
         
-        # Step 3: Presidio Anonymization
+        # Step 3: Use NER model for anonymization if available, otherwise use Presidio
         anonymized_text = sanitized_text
-        if self.presidio is not None:
+        if self.masking is not None and self.masking.available:
+            anonymized_text, _ = self.masking.anonymize(sanitized_text, analysis)
+        elif self.presidio is not None:
             anonymized_text, _ = self.presidio.anonymize(sanitized_text, analysis)
         
         # Step 4: TenSEAL Encryption (optional)

@@ -7,7 +7,7 @@ auth_token = ""
 
 [settings]
 llm = "llama"
-embeddings = "embedding path"
+embeddings = "EMBEDDING_PATH"
 split_type = "sentence"
 chunk_size = 2048
 dataset = "json_download"
@@ -50,6 +50,11 @@ flower_weight = 1.0
 privacy_log_stats = true
 mask_all_entities = true  
 use_entity_type_tags = true 
+# NER Model configuration for custom entity detection
+ner_model_path = "/root/Fedrag/RAGTest/bert_final_model"  # Path to HuggingFace NER model (e.g., "D:/ner/bert_final_model")
+ner_model_device = null  # GPU device ID (0, 1, etc.) or null for CPU
+ner_use_fast_tokenizer = true  # Use fast tokenizer
+ner_aggregation_strategy = "simple"  # Aggregation strategy: "simple", "first", "max", "average"
 # Save protected responses to file
 save_protected_responses = true  # Set to true to save responses
 protected_responses_dir = "./privacy_responses"  # Directory to save files
