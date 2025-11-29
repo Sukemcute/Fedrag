@@ -10,6 +10,8 @@ logging.basicConfig(
 )
 privacy_logger = logging.getLogger('privacy.privacy_summary')
 privacy_logger.setLevel(logging.INFO)
+# Also enable DEBUG for privacy module to see detailed logs
+logging.getLogger('privacy').setLevel(logging.DEBUG)
 
 from llama_index.core import Settings, PromptTemplate
 from llms.llm import get_llm

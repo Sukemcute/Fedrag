@@ -88,11 +88,9 @@ def _load_ner_model(cfg: PrivacySummaryConfig): # khoi tao masking ner model
         
         ner_pipeline = pipeline_func("token-classification", **pipeline_kwargs)
         LOGGER.info("NER model loaded successfully from %s", cfg.ner_model_path)
-        print(f"[PRIVACY] ✅ NER model loaded successfully from {cfg.ner_model_path}")
         return ner_pipeline
     except Exception as exc:  # pylint: disable=broad-exception-caught
         LOGGER.warning("Failed to load NER model from %s: %s", cfg.ner_model_path, exc)
-        print(f"[PRIVACY] ❌ Failed to load NER model from {cfg.ner_model_path}: {exc}")
         return None
 
 
@@ -129,7 +127,7 @@ class PrivacySummaryConfig:
         ]
     )
     anonymizer_policy: str = "replace"
-    anonymizer_placeholder: str = "[REDACTED]"
+    anonymizer_placeholder: str = "<REDACTED>"
     encryption_enabled: bool = True
     encryption_chunk_size: int = 256
     encryption_poly_modulus_degree: int = 8192
@@ -143,23 +141,14 @@ class PrivacySummaryConfig:
     federated_weight: float = 1.0
     passthrough_entities: List[str] = field(default_factory=list)
     log_stats: bool = True
-    # Mask all detected entities with entity type tags (e.g., [MONEY], [DATE])
+    # Mask all detected entities with entity type tags (e.g., <MONEY>, <DATE>)
     mask_all_entities: bool = False
-    use_entity_type_tags: bool = True  # Use [ENTITY_TYPE] instead of [REDACTED]
+    use_entity_type_tags: bool = True  # Use <ENTITY_TYPE> instead of <REDACTED>
     # NER model configuration
     ner_model_path: Optional[str] = None  # Path to HuggingFace NER model
     ner_model_device: Optional[int] = None  # GPU device ID (0, 1, etc.) or None for CPU
     ner_use_fast_tokenizer: bool = True  # Use fast tokenizer
     ner_aggregation_strategy: str = "simple"  # Aggregation strategy for pipeline
-    # T5 Infill configuration
-    infill_enabled: bool = False  # Enable T5 infill functionality
-    infill_model_path: Optional[str] = None  # Path to T5 infill model
-    infill_max_len_in: int = 128  # Max input length for T5
-    infill_max_len_out: int = 96  # Max output length for T5
-    infill_temperature: float = 1.3  # Sampling temperature
-    infill_top_k: int = 50  # Top-k sampling
-    infill_top_p: float = 0.9  # Top-p (nucleus) sampling
-    infill_max_loops: int = 10  # Maximum infill iterations
 
     @classmethod
     def from_dict(cls, raw_cfg: Optional[Dict[str, Any]]) -> "PrivacySummaryConfig":
@@ -190,14 +179,6 @@ class PrivacySummaryConfig:
             "ner_model_device": "ner_model_device",
             "ner_use_fast_tokenizer": "ner_use_fast_tokenizer",
             "ner_aggregation_strategy": "ner_aggregation_strategy",
-            "infill_enabled": "infill_enabled",
-            "infill_model_path": "infill_model_path",
-            "infill_max_len_in": "infill_max_len_in",
-            "infill_max_len_out": "infill_max_len_out",
-            "infill_temperature": "infill_temperature",
-            "infill_top_k": "infill_top_k",
-            "infill_top_p": "infill_top_p",
-            "infill_max_loops": "infill_max_loops",
         }
 
         cfg_dict = {}
@@ -343,11 +324,11 @@ class PrivacySummaryConfig:
                 
 #                 # Use entity type tags if enabled, otherwise use placeholder
 #                 if self.cfg.use_entity_type_tags:
-#                     placeholder = f"[{entity_type}]"
+#                     placeholder = f"<{entity_type}>"
 #                 elif placeholder_template:
 #                     placeholder = placeholder_template
 #                 else:
-#                     placeholder = f"[{entity_type}]"
+#                     placeholder = f"<{entity_type}>"
                 
 #                 operators[entity_type] = {"type": "replace", "new_value": placeholder}
 
@@ -444,7 +425,7 @@ class PrivacySummaryConfig:
             
 #             # Use entity type tags if enabled, otherwise use placeholder
 #             if self.cfg.use_entity_type_tags:
-#                 placeholder = f"[{res['entity_type']}]"
+#                 placeholder = f"<{res['entity_type']}>"
 #             else:
 #                 placeholder = self.cfg.anonymizer_placeholder
             
@@ -474,23 +455,15 @@ class NER_Model_Sanitizer:
 
     def analyze(self, text: str) -> Dict[str, Any]:
         """Run NER model and return normalized results."""
-        if not text.strip():
-            LOGGER.debug("NER analyze: Empty text provided")
-            return {"results": [], "normalized": []}
-        
-        if not self.available:
-            LOGGER.warning("NER model not available for analysis")
+        if not text.strip() or not self.available:
             return {"results": [], "normalized": []}
 
         try:
             results = self._model_analyze(text)
             normalized = self._normalize_results(results)
-            LOGGER.debug(f"NER analyze: Found {len(results)} raw results, {len(normalized)} normalized entities")
-            if normalized:
-                LOGGER.debug(f"NER entities detected: {[r.get('entity_type') for r in normalized]}")
             return {"results": results, "normalized": normalized}
         except Exception as exc:
-            LOGGER.warning("NER analyze failed: %s", exc, exc_info=True)
+            LOGGER.warning("NER analyze failed: %s", exc)
             return {"results": [], "normalized": []}
 
     def _model_analyze(self, text: str) -> List[Dict[str, Any]]:
@@ -498,13 +471,7 @@ class NER_Model_Sanitizer:
         results = []
 
         if hasattr(self.model, "__call__"):
-            try:
-                ner_results = self.model(text)
-                LOGGER.debug(f"NER model returned {len(ner_results)} entities for text: {text[:100]}...")
-            except Exception as exc:
-                LOGGER.error(f"NER model call failed: {exc}", exc_info=True)
-                return results
-            
+            ner_results = self.model(text)
             for ent in ner_results:
                 # Handle HuggingFace pipeline format: entity_group, word, score, start, end
                 if isinstance(ent, dict):
@@ -528,7 +495,6 @@ class NER_Model_Sanitizer:
                 # Filter by allowed_entities if mask_all_entities is False
                 if not self.cfg.mask_all_entities and self.cfg.allowed_entities:
                     if entity_type not in self.cfg.allowed_entities:
-                        LOGGER.debug(f"Filtered out entity {entity_type} (not in allowed_entities)")
                         continue
                 
                 results.append({
@@ -561,7 +527,7 @@ class NER_Model_Sanitizer:
             end = res["end"] + offset
 
             if self.cfg.use_entity_type_tags:
-                placeholder = f"[{res['entity_type']}]"
+                placeholder = f"<{res['entity_type']}>"
             else:
                 placeholder = self.cfg.anonymizer_placeholder
 
@@ -893,7 +859,7 @@ def apply_pii_masking(
             continue
             
         if cfg.use_entity_type_tags:
-            placeholder = f"[{entity_type}]"
+            placeholder = f"<{entity_type}>"
         else:
             placeholder = cfg.anonymizer_placeholder
             
@@ -903,144 +869,6 @@ def apply_pii_masking(
         replacements.append(span)
         
     return masked_text, replacements
-
-
-class T5InfillProcessor:
-    """Processor for T5-based PII infilling - simplified logic from test_full.py."""
-
-    def __init__(self, cfg: PrivacySummaryConfig):
-        self.cfg = cfg
-        self.enabled = cfg.infill_enabled and cfg.infill_model_path is not None
-        self.model = None
-        self.tokenizer = None
-        self.available = False
-        if self.enabled:
-            self._init_model()
-
-    def _init_model(self) -> None:
-        """Initialize T5 model for infilling."""
-        try:
-            from transformers import T5Tokenizer, T5ForConditionalGeneration
-        except ImportError as exc:
-            LOGGER.warning("T5 transformers not available: %s", exc)
-            print(f"[PRIVACY] ⚠️ T5 transformers not available: {exc}")
-            return
-
-        try:
-            self.tokenizer = T5Tokenizer.from_pretrained(self.cfg.infill_model_path)
-            self.model = T5ForConditionalGeneration.from_pretrained(self.cfg.infill_model_path)
-            if self.tokenizer is not None and self.model is not None:
-                self.available = True
-                LOGGER.info("T5 infill processor initialized successfully")
-                print(f"[PRIVACY] ✅ T5 infill processor initialized from {self.cfg.infill_model_path}")
-            else:
-                LOGGER.warning("Failed to load T5 infill model")
-                print("[PRIVACY] ❌ Failed to load T5 infill model")
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            LOGGER.warning("T5 infill processor initialization failed: %s", exc)
-            print(f"[PRIVACY] ❌ T5 infill processor initialization failed: {exc}")
-            self.available = False
-
-    def _infill_pii(self, masked_text: str) -> str:
-        """Generate infilled text from masked input - simple logic from test_full.py."""
-        try:
-            import torch
-        except ImportError:
-            LOGGER.warning("Torch not available for T5 infill")
-            return masked_text
-
-        TASK_PREFIX = "infill pii: "
-        text = TASK_PREFIX + masked_text.strip()
-        inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=self.cfg.infill_max_len_in)
-        
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                do_sample=True,
-                temperature=self.cfg.infill_temperature,
-                top_k=self.cfg.infill_top_k,
-                top_p=self.cfg.infill_top_p,
-                max_new_tokens=self.cfg.infill_max_len_out,
-            )
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-    def _post_infill(self, masked_text: str, infilled_text: str) -> str:
-        """Replace placeholders in masked text with values from infilled text - from test_full.py."""
-        # Remove task prefix if present
-        if infilled_text.startswith("infill pii:"):
-            infilled_text = infilled_text[len("infill pii:"):].strip()
-        
-        clean_infilled = re.sub(r"\[[A-Z_0-9]+\]", "", infilled_text).strip()
-        placeholders = re.findall(r"\[[A-Z_0-9]+\]", masked_text)
-
-        if len(placeholders) == 1:
-            final_text = masked_text.replace(placeholders[0], clean_infilled)
-        else:
-            pairs = re.findall(r"(\[[A-Z_0-9]+\])\s*([^\[]+)", infilled_text)
-            final_text = masked_text
-            if pairs:
-                for tag, val in pairs:
-                    final_text = final_text.replace(tag, val.strip())
-            else:
-                parts = clean_infilled.split()
-                for i, ph in enumerate(placeholders):
-                    value = parts[i] if i < len(parts) else ""
-                    final_text = final_text.replace(ph, value)
-        return " ".join(final_text.split())
-
-    def _loop_infill(self, masked_text: str) -> str:
-        """Loop infill until no placeholders remain - simple logic from test_full.py."""
-        text = masked_text
-        for iteration in range(self.cfg.infill_max_loops):
-            placeholders = re.findall(r"\[[A-Z_0-9]+\]", text)
-            if not placeholders:
-                LOGGER.debug(f"Infill completed after {iteration} iterations")
-                break
-            
-            infilled_text = self._infill_pii(text)
-            text = self._post_infill(text, infilled_text)
-            
-            # Check remaining placeholders
-            remaining = re.findall(r"\[[A-Z_0-9]+\]", text)
-            if len(remaining) == len(placeholders) and iteration > 0:
-                LOGGER.warning(f"Infill iteration {iteration + 1}: No progress, stopping")
-                break
-        
-        remaining_placeholders = re.findall(r"\[[A-Z_0-9]+\]", text)
-        if remaining_placeholders:
-            LOGGER.warning(f"Infill incomplete: {len(remaining_placeholders)} placeholders still remain")
-        
-        return text
-
-    def infill(self, masked_text: str) -> Tuple[str, Dict[str, Any]]:
-        """Generate infilled text from masked input - simplified from test_full.py.
-        
-        Args:
-            masked_text: Text with entity placeholders (e.g., "My name is [NAME]")
-            
-        Returns:
-            Tuple of (infilled_text, metadata)
-        """
-        if not self.available or not masked_text:
-            return masked_text, {"infilled": False, "reason": "model_not_available"}
-
-        try:
-            print(f"[PRIVACY] 🔄 Starting T5 infill on masked text (length: {len(masked_text)})")
-            infilled_text = self._loop_infill(masked_text)
-            print(f"[PRIVACY] ✅ T5 infill completed (length: {len(infilled_text)})")
-
-            metadata = {
-                "infilled": True,
-                "original_length": len(masked_text),
-                "infilled_length": len(infilled_text),
-            }
-
-            return infilled_text, metadata
-
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            LOGGER.warning("T5 infill failed: %s", exc)
-            print(f"[PRIVACY] ❌ T5 infill failed: {exc}")
-            return masked_text, {"infilled": False, "reason": "generation_failed", "error": str(exc)}
 
 
 class PrivacyAwareSummaryPostprocessor(BaseNodePostprocessor):
@@ -1053,18 +881,10 @@ class PrivacyAwareSummaryPostprocessor(BaseNodePostprocessor):
         # self.presidio = PresidioSanitizer(cfg) if cfg.enable else None
         # Load NER model if configured
         ner_model = _load_ner_model(cfg) if cfg.enable and cfg.ner_model_path else None
-        if cfg.enable and cfg.ner_model_path and ner_model is None:
-            LOGGER.warning(f"Failed to load NER model from {cfg.ner_model_path}")
         self.masking = NER_Model_Sanitizer(cfg, model=ner_model) if cfg.enable else None
-        if self.masking is not None:
-            LOGGER.info(f"NER Model Sanitizer initialized: available={self.masking.available}")
-            print(f"[PRIVACY] NER Model Sanitizer initialized: available={self.masking.available}")
-        else:
-            print(f"[PRIVACY] ⚠️ NER Model Sanitizer is None (enable={cfg.enable})")
         self.eraser = Eraser4RAGSanitizer(cfg) if cfg.enable else None
         self.encryptor = TenSEALEncryptor(cfg) if cfg.enable else None
         self.aggregator = FlowerPrivacyAggregator(cfg) if cfg.enable else None
-        self.infill_processor = T5InfillProcessor(cfg) if cfg.enable and cfg.infill_enabled else None
         self._metrics_buffer: List[Dict[str, float]] = []
 
     def _postprocess_nodes(
@@ -1162,7 +982,7 @@ class PrivacyAwareSummaryPostprocessor(BaseNodePostprocessor):
                     "pii_density": privacy_metadata["pii_density"],
                     "removal_ratio": privacy_metadata["removal_ratio"],
                     "average_risk": privacy_metadata["eraser"]["average_risk"],
-                    "weight": float(len(infilled_text)),
+                    "weight": float(len(anonymized_text)),
                 }
             )
 
@@ -1188,7 +1008,6 @@ class PrivacyAwareSummaryPostprocessor(BaseNodePostprocessor):
         analysis: Dict[str, Any],
         eraser_meta: Dict[str, Any],
         encrypted_payload: Optional[str],
-        infill_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         pii_items = analysis.get("normalized", [])
         pii_chars = sum(item["end"] - item["start"] for item in pii_items)
@@ -1200,7 +1019,7 @@ class PrivacyAwareSummaryPostprocessor(BaseNodePostprocessor):
             / max(1, eraser_meta.get("removed_count", 0) + eraser_meta.get("kept_count", 0))
         )
 
-        metadata = {
+        return {
             "pii_entities": [
                 {
                     "entity_type": item["entity_type"],
@@ -1219,11 +1038,6 @@ class PrivacyAwareSummaryPostprocessor(BaseNodePostprocessor):
                 "payload": encrypted_payload,
             },
         }
-        
-        if infill_meta:
-            metadata["infill"] = infill_meta
-            
-        return metadata
 
     def _maybe_update_threshold(self) -> None:
         if self.aggregator is None or not self._metrics_buffer:
@@ -1244,18 +1058,10 @@ class PrivacyAwareResponsePostprocessor:
         # self.presidio = PresidioSanitizer(cfg) if cfg.enable else None
         # Load NER model if configured
         ner_model = _load_ner_model(cfg) if cfg.enable and cfg.ner_model_path else None
-        if cfg.enable and cfg.ner_model_path and ner_model is None:
-            LOGGER.warning(f"Failed to load NER model from {cfg.ner_model_path}")
         self.masking = NER_Model_Sanitizer(cfg, model=ner_model) if cfg.enable else None
-        if self.masking is not None:
-            LOGGER.info(f"NER Model Sanitizer initialized: available={self.masking.available}")
-            print(f"[PRIVACY] NER Model Sanitizer initialized: available={self.masking.available}")
-        else:
-            print(f"[PRIVACY] ⚠️ NER Model Sanitizer is None (enable={cfg.enable})")
         self.eraser = Eraser4RAGSanitizer(cfg) if cfg.enable else None
         self.encryptor = TenSEALEncryptor(cfg) if cfg.enable else None
         self.aggregator = FlowerPrivacyAggregator(cfg) if cfg.enable else None
-        self.infill_processor = T5InfillProcessor(cfg) if cfg.enable and cfg.infill_enabled else None
         self._metrics_buffer: List[Dict[str, float]] = []
     
     def postprocess_response(
@@ -1281,16 +1087,8 @@ class PrivacyAwareResponsePostprocessor:
         # Step 1: Analyze original text with all available sanitizers
         all_spans = []
         if self.masking is not None and self.masking.available:
-            LOGGER.debug(f"Running NER analysis on text (length: {len(original_text)})")
-            print(f"[PRIVACY] 🔍 Running NER analysis on text (length: {len(original_text)})")
             ner_analysis = self.masking.analyze(original_text)
-            detected_spans = ner_analysis.get("normalized", [])
-            LOGGER.info(f"NER detected {len(detected_spans)} entities: {[s.get('entity_type') for s in detected_spans]}")
-            print(f"[PRIVACY] 📊 NER detected {len(detected_spans)} entities: {[s.get('entity_type') for s in detected_spans]}")
-            all_spans.extend(detected_spans)
-        else:
-            LOGGER.warning("NER masking not available - model may not be loaded")
-            print(f"[PRIVACY] ⚠️ NER masking not available - model may not be loaded (masking={self.masking}, available={self.masking.available if self.masking else None})")
+            all_spans.extend(ner_analysis.get("normalized", []))
             
         # if self.presidio is not None:
         #     presidio_analysis = self.presidio.analyze(original_text)
@@ -1330,38 +1128,31 @@ class PrivacyAwareResponsePostprocessor:
             
         anonymized_text, _ = apply_pii_masking(sanitized_text, merged_spans, self.cfg)
         
-        # Step 4: Infill with T5 if enabled
-        infilled_text = anonymized_text
-        infill_metadata = {"infilled": False}
-        if self.infill_processor is not None and self.infill_processor.available:
-            infilled_text, infill_metadata = self.infill_processor.infill(anonymized_text)
-        
-        # Step 5: TenSEAL Encryption (optional)
+        # Step 4: TenSEAL Encryption (optional)
         encrypted_payload = (
-            self.encryptor.encrypt(infilled_text)
+            self.encryptor.encrypt(anonymized_text)
             if self.encryptor is not None
             else None
         )
         
-        # Step 6: Build Privacy Metadata
+        # Step 5: Build Privacy Metadata
         privacy_metadata = self._build_privacy_metadata(
             original_text=original_text,
             sanitized_text=sanitized_text,
-            anonymized_text=infilled_text,
+            anonymized_text=anonymized_text,
             analysis=analysis,
             eraser_meta=eraser_meta,
             encrypted_payload=encrypted_payload,
-            infill_meta=infill_metadata,
         )
         
-        # Step 7: Update Response
+        # Step 6: Update Response
         processed_response = deepcopy(response)
         # Update response text
         if hasattr(processed_response, 'response'):
-            processed_response.response = infilled_text
+            processed_response.response = anonymized_text
         elif hasattr(processed_response, 'message') and hasattr(processed_response.message, 'content'):
             # For ChatResponse objects
-            processed_response.message.content = infilled_text
+            processed_response.message.content = anonymized_text
         
         # Add privacy metadata to response
         if not hasattr(processed_response, 'metadata') or processed_response.metadata is None:
@@ -1389,7 +1180,7 @@ class PrivacyAwareResponsePostprocessor:
                 "pii_density": privacy_metadata["pii_density"],
                 "removal_ratio": privacy_metadata["removal_ratio"],
                 "average_risk": privacy_metadata["eraser"]["average_risk"],
-                "weight": float(len(infilled_text)),
+                "weight": float(len(anonymized_text)),
             }
         )
         
@@ -1405,7 +1196,6 @@ class PrivacyAwareResponsePostprocessor:
         analysis: Dict[str, Any],
         eraser_meta: Dict[str, Any],
         encrypted_payload: Optional[str],
-        infill_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Build privacy metadata (reuse from PrivacyAwareSummaryPostprocessor)."""
         pii_items = analysis.get("normalized", [])
@@ -1418,7 +1208,7 @@ class PrivacyAwareResponsePostprocessor:
             / max(1, eraser_meta.get("removed_count", 0) + eraser_meta.get("kept_count", 0))
         )
 
-        metadata = {
+        return {
             "pii_entities": [
                 {
                     "entity_type": item["entity_type"],
@@ -1437,11 +1227,6 @@ class PrivacyAwareResponsePostprocessor:
                 "payload": encrypted_payload,
             },
         }
-        
-        if infill_meta:
-            metadata["infill"] = infill_meta
-            
-        return metadata
     
     def _maybe_update_threshold(self) -> None:
         """Update risk threshold via Flower aggregation."""

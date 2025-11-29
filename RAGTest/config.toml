@@ -34,7 +34,7 @@ query_transform = "none"
 [privacy]
 enable_privacy_summary = true
 presidio_language = "en"
-presidio_entities = ["PERSON", "PHONE_NUMBER", "EMAIL_ADDRESS", "CREDIT_CARD", "LOCATION", "US_SSN", "DATE", "MONEY"]
+presidio_entities = ["ORGANIZATION", "MONEY", "URL"]
 eraser_risk_threshold = 0.45
 eraser_drop_high_risk = true
 eraser_preserve_sentences = 1
@@ -52,10 +52,19 @@ mask_all_entities = true
 use_entity_type_tags = true 
 # NER Model configuration for custom entity detection
 ner_model_path = "/root/Fedrag/RAGTest/bert_final_model"  # Path to HuggingFace NER model (e.g., "D:/ner/bert_final_model")
-ner_model_device = null  # GPU device ID (0, 1, etc.) or null for CPU
+ner_model_device = 0  # GPU device ID (0, 1, etc.) or null for CPU
 ner_use_fast_tokenizer = true  # Use fast tokenizer
 ner_aggregation_strategy = "simple"  # Aggregation strategy: "simple", "first", "max", "average"
 # Save protected responses to file
 save_protected_responses = true  # Set to true to save responses
 protected_responses_dir = "./privacy_responses"  # Directory to save files
 protected_responses_format = "json"  # "json" or "txt"
+# T5 Infill Module configuration
+infill_enabled = true  # Set to true to enable infill functionality
+infill_model_path = "/root/Fedrag/RAGTest/t5_infill"  # Path to T5 infill model
+infill_max_len_in = 128  # Max input length for T5
+infill_max_len_out = 96  # Max output length for T5
+infill_temperature = 1.3  # Sampling temperature
+infill_top_k = 50  # Top-k sampling
+infill_top_p = 0.9  # Top-p (nucleus) sampling
+infill_max_loops = 10  # Maximum infill iterations
