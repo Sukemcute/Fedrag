@@ -1,2 +1,5 @@
 *.md
 *.pyc
+RAGTest/data/test_corpus_backup.json
+FedE/x-model_2025-11-23_10-52-43_converted/
+FedE/x-model_2025-11-23_10-52-43_converted/config.json
