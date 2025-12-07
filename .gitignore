@@ -175,3 +175,6 @@ finsaferag/finsaferag/storage
 checkpoints/
 train_data/
 finsaferag/finsaferag/data/test_corpus_backup.json
+RAGTest/data/.ipynb_checkpoints/qa-checkpoint.json
+finsaferag/finsaferag/data/rag_corpus.json
+RAGTest/data/.ipynb_checkpoints/documents-checkpoint.json
