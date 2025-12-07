@@ -344,6 +344,6 @@ for metric, total_score in global_evaluation_scores.items():
 f.write(formatted_output)
 f.close()
 write_categorized_averages_to_file(path)
-# python main.py --evaluateApiName="gpt-3.5-turbo" --evaluateApiKey="REDACTED_OPENAI_API_KEY"
+# python main.py --evaluateApiName="gpt-3.5-turbo" --evaluateApiKey="sk-your-openai-api-key-here"
 if __name__ == '__main__':
     print('Success')

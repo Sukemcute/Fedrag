@@ -196,7 +196,7 @@ for question, expected_answer, golden_context, golden_context_ids in zip(
         print("总数：" + str(all_num))
 
 evaluateResults_TRT.print_results_to_path("./50_test_TRT.txt", cfg, last_dir)
-# python main.py --evaluateApiName="gpt-3.5-turbo" --evaluateApiKey="REDACTED_OPENAI_API_KEY"
+# python main.py --evaluateApiName="gpt-3.5-turbo" --evaluateApiKey="sk-your-openai-api-key-here"
 if __name__ == '__main__':
     print('Success')
 
