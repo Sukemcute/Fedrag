@@ -21,6 +21,7 @@ import numpy as np
 import torch
 
 
+#initialize seed var
 def seed_everything(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -34,9 +35,13 @@ seed_everything(42)
 name = "Your LLM api"
 auth_token = "Your api key"
 
+
+#Load config 
 cfg = Config()
 import argparse
 
+
+#Get para and execute (python main_100_test.py --model="BAAI/bge-base-en")
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, default=None)
 args = parser.parse_args()
@@ -45,12 +50,14 @@ if args.model is None:
     embeddings = get_embedding("/root/autodl-tmp/model/model-en")
     last_dir = "BGE-en-50-test"
 else:
+    #embedding model
     embeddings = get_embedding(args.model)
     last_dir = os.path.basename(args.model)
 qa_dataset = get_qa_dataset(cfg.dataset)
 print("dataset")
 print(last_dir)
 
+# Get value of var llm which define in config.toml
 llm = get_llm(cfg.llm)
 print("llm")
 
@@ -67,6 +74,7 @@ Settings.embed_model = embeddings
 cfg.persist_dir = cfg.persist_dir + '-' + cfg.dataset + '-' + last_dir + '100_all' + '-' + cfg.split_type + '-' + str(
     cfg.chunk_size)
 
+#load or build index
 index, hierarchical_storage_context = get_index(qa_dataset, cfg.persist_dir, split_type=cfg.split_type,
                                                 chunk_size=cfg.chunk_size)
 print("index")
@@ -78,6 +86,7 @@ query_engine = RetrieverQueryEngine(
     node_postprocessors=[get_postprocessor(cfg)]
 )
 
+#evaluation metric
 
 def hit(retrieval_ids, golden_context_ids, k=1):
     for golden_id in golden_context_ids:
@@ -116,6 +125,7 @@ def precision(retrieved_ids, expected_ids, k=1):
     return Precision
 
 
+#Setup prompt template
 text_qa_template_str = (
     "Below is the context information.\n"
     "---------------------\n"

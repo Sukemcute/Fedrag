@@ -83,9 +83,9 @@ def summary_retriever(summary_index, retriver_type_Summary='normal',similarity_t
 
 # note index必须为树索引 https://docs.llamaindex.ai/en/latest/api_reference/indices/tree.html#llama_index.core.indices.tree.TreeIndex
 def tree_retriever(index, retriver_type_TREE='root'):
-    if retriver_type_TREE.lower=='root':
+    if retriver_type_TREE.lower()=='root':
         mode = 0
-    elif retriver_type_TREE.lower=='allleaf':
+    elif retriver_type_TREE.lower()=='allleaf':
         mode = 1
     elif retriver_type_TREE.lower=='selectleaf':
         mode = 2
