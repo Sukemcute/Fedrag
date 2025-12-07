@@ -174,3 +174,4 @@ finsaferag/finsaferag/storage
 
 checkpoints/
 train_data/
+finsaferag/finsaferag/data/test_corpus_backup.json
