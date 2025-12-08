@@ -38,35 +38,24 @@ def _lazy_import_tenseal():
 def _weighted_average_manual(weights_results: List[Tuple[List[np.ndarray], float]]) -> List[np.ndarray]:
     """
     Manual implementation of weighted_average for Flower compatibility.
-    
-    Args:
-        weights_results: List of tuples (parameters, weight) where parameters is a list of numpy arrays
-        
-    Returns:
-        List of weighted averaged numpy arrays
     """
     if not weights_results:
         return []
     
-    # Get the structure from first element
     num_arrays = len(weights_results[0][0])
     total_weights = sum(weight for _, weight in weights_results)
     
     if total_weights == 0:
         return [np.zeros_like(weights_results[0][0][i]) for i in range(num_arrays)]
     
-    # Initialize result arrays
     result = []
     for i in range(num_arrays):
-        # Get shape from first array
         shape = weights_results[0][0][i].shape
         weighted_sum = np.zeros(shape, dtype=np.float64)
         
-        # Sum weighted arrays
         for params, weight in weights_results:
             weighted_sum += params[i] * weight
         
-        # Divide by total weight
         result.append(weighted_sum / total_weights)
     
     return result
@@ -82,12 +71,10 @@ def _lazy_import_flower():
         return weighted_average
     except ImportError:
         try:
-            # Try alternative location in newer Flower versions
             from flwr.server.strategy import weighted_average
             LOGGER.info("Using Flower's weighted_average from flwr.server.strategy")
             return weighted_average
         except ImportError:
-            # Fallback to manual implementation
             LOGGER.info("Flower weighted_average not found, using manual implementation")
             return _weighted_average_manual
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -362,7 +349,11 @@ class PresidioSanitizer:
                         }
                     },
                 )
-                return result.text, normalized
+                # Handle both dict and object response from Presidio
+                if isinstance(result, dict):
+                    return result.get("text", text), normalized
+                else:
+                    return result.text, normalized
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 LOGGER.warning("Presidio anonymize failed, using fallback: %s", exc)
 

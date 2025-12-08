@@ -1,33 +1,93 @@
 """
 Streamlit Chatbot UI for RAG with Privacy Protection
-Financial Q&A Chatbot Interface - ChatGPT-style Design
+Multi-Topic Q&A Chatbot Interface with Federated Learning
 """
 import streamlit as st
 import requests
 import json
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import time
-import html  # dùng để escape nội dung chat
+import html
+import re
+from translations import get_text, get_topic_examples
 
 
 # Configuration
 API_BASE_URL = "http://localhost:8000"
 DEFAULT_SESSION_ID = "streamlit_session"
 
+# Topic configurations
+TOPIC_CONFIG = {
+    "finance": {
+        "icon": "💰",
+        "color": "#0ea5e9",
+        "retrievers": ["financial", "general"],
+        "example_icon": "📊"
+    },
+    "healthcare": {
+        "icon": "🏥",
+        "color": "#10b981",
+        "retrievers": ["general", "technical"],
+        "example_icon": "🩺"
+    },
+    "legal": {
+        "icon": "⚖️",
+        "color": "#8b5cf6",
+        "retrievers": ["legal", "general"],
+        "example_icon": "📜"
+    },
+    "education": {
+        "icon": "🎓",
+        "color": "#f59e0b",
+        "retrievers": ["general", "technical"],
+        "example_icon": "📚"
+    },
+    "technology": {
+        "icon": "💻",
+        "color": "#3b82f6",
+        "retrievers": ["technical", "general"],
+        "example_icon": "⚡"
+    },
+    "general": {
+        "icon": "🌍",
+        "color": "#6b7280",
+        "retrievers": ["general"],
+        "example_icon": "💡"
+    }
+}
+
+
+def init_session_state():
+    """Initialize session state variables"""
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = f"{DEFAULT_SESSION_ID}_{int(time.time())}"
+    
+    if "language" not in st.session_state:
+        st.session_state.language = "vi"  # Default to Vietnamese
+    
+    if "topic" not in st.session_state:
+        st.session_state.topic = "finance"
+    
+    if "thinking_state" not in st.session_state:
+        st.session_state.thinking_state = None
+
 
 # Page configuration
 st.set_page_config(
-    page_title="Financial Q&A Chatbot",
-    page_icon="💰",
+    page_title=get_text("page_title", st.session_state.get("language", "vi")),
+    page_icon=get_text("page_icon", st.session_state.get("language", "vi")),
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 
+# CSS Styles (keeping the original beautiful design)
 st.markdown("""
 <style>
-
     /* Nền chung */
     html, body, [data-testid="stAppViewContainer"] {
         background-color: #f8fafc !important;
@@ -68,7 +128,7 @@ st.markdown("""
         font-size: 0.95rem !important;
     }
 
-    /* Status block (API Online, Federated...) */
+    /* Status block */
     .sidebar-status-block {
         background: #e8fdf2 !important;
         color: #0f5132 !important;
@@ -79,7 +139,7 @@ st.markdown("""
         font-weight: 600;
     }
 
-    /* Highlight block (mode info) */
+    /* Info block */
     .sidebar-info-block {
         background: #e0f0ff !important;
         color: #1e3a8a !important;
@@ -87,6 +147,100 @@ st.markdown("""
         padding: 1rem !important;
         border-radius: 12px !important;
         margin-top: 0.8rem !important;
+        font-weight: 600;
+    }
+
+    /* FL Community Card */
+    .fl-community-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: white !important;
+        padding: 1.2rem !important;
+        border-radius: 12px !important;
+        margin: 1rem 0 !important;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3) !important;
+    }
+    
+    .fl-stat {
+        display: flex;
+        justify-content: space-between;
+        margin: 0.5rem 0;
+        font-size: 0.9rem;
+    }
+    
+    .fl-stat-label {
+        opacity: 0.9;
+    }
+    
+    .fl-stat-value {
+        font-weight: 700;
+    }
+
+    /* Thinking indicator */
+    .thinking-container {
+        background: linear-gradient(135deg, #fef3c7 0%, #fed7aa 100%);
+        border: 2px solid #f59e0b;
+        border-radius: 12px;
+        padding: 1rem 1.5rem;
+        margin: 1rem 0;
+        animation: pulse 2s ease-in-out infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.8; }
+    }
+    
+    .thinking-title {
+        font-weight: 700;
+        color: #92400e;
+        margin-bottom: 0.5rem;
+    }
+    
+    .thinking-state {
+        color: #78350f;
+        font-size: 0.95rem;
+    }
+
+    /* Privacy masked info */
+    .masked-info-container {
+        background: #fef3c7;
+        border: 2px solid #fde047;
+        border-radius: 12px;
+        padding: 1rem;
+        margin: 0.75rem 0;
+    }
+    
+    .masked-comparison {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        margin-top: 0.75rem;
+    }
+    
+    .masked-box {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 0.75rem;
+    }
+    
+    .masked-label {
+        font-weight: 600;
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-bottom: 0.5rem;
+    }
+    
+    .masked-text {
+        font-size: 0.9rem;
+        color: #1f2937;
+        line-height: 1.5;
+    }
+    
+    .masked-highlight {
+        background: #fef3c7;
+        padding: 0.1rem 0.3rem;
+        border-radius: 4px;
         font-weight: 600;
     }
 
@@ -100,13 +254,11 @@ st.markdown("""
         transition: all 0.25s ease;
     }
 
-    /* Hover effect */
     .stRadio > div > label:hover {
         border-color: #3b82f6 !important;
         background: #eff6ff !important;
     }
 
-    /* Selected radio */
     input:checked + div {
         border: 2px solid #3b82f6 !important;
         background: #dbeafe !important;
@@ -124,66 +276,7 @@ st.markdown("""
         border-color: #e5e7eb !important;
     }
 
-    /* Hiển thị và style nút thu gọn sidebar */
-    button[data-testid="collapseSidebarButton"] {
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        background: var(--primary) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 50% !important;
-        width: 36px !important;
-        height: 36px !important;
-        position: fixed !important;
-        top: 1rem !important;
-        left: 1rem !important;
-        z-index: 999 !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
-        transition: all 0.3s ease !important;
-        cursor: pointer !important;
-        opacity: 1 !important;
-        visibility: visible !important;
-    }
-    
-    button[data-testid="collapseSidebarButton"]:hover {
-        background: var(--primary-dark) !important;
-        transform: scale(1.1) !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
-    }
-    
-    /* Đảm bảo sidebar luôn có thể hiển thị */
-    [data-testid="stSidebar"] {
-        visibility: visible !important;
-    }
-    
-    /* Nút khôi phục sidebar (backup) */
-    .sidebar-restore-btn {
-        position: fixed !important;
-        top: 1rem !important;
-        left: 1rem !important;
-        z-index: 1000 !important;
-        background: var(--primary) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 50% !important;
-        width: 40px !important;
-        height: 40px !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        font-size: 1.2rem !important;
-        cursor: pointer !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
-        transition: all 0.3s ease !important;
-    }
-    
-    .sidebar-restore-btn:hover {
-        background: var(--primary-dark) !important;
-        transform: scale(1.1) !important;
-    }
-
-    /* 🎨 BLUE THEME */
+    /* Theme colors */
     :root {
         --primary: #0ea5e9;
         --primary-light: #e0f2fe;
@@ -203,13 +296,6 @@ st.markdown("""
 
     .main {
         background: #f8fafc !important;
-    }
-    
-    .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 8rem !important;
-        max-width: 900px !important;
-        background: #ffffff !important;
     }
     
     /* Chat container */
@@ -319,31 +405,6 @@ st.markdown("""
         border: 1px solid #fde047;
     }
     
-    /* Input container - fixed at bottom */
-    .input-container {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        background: white;
-        border-top: 2px solid var(--neutral-200);
-        padding: 1.5rem;
-        z-index: 1000;
-        box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
-    }
-    
-    @media (min-width: 768px) {
-        .input-container {
-            left: 21rem;
-            width: calc(100% - 21rem);
-        }
-    }
-    
-    .input-wrapper {
-        max-width: 900px;
-        margin: 0 auto;
-    }
-    
     /* Text area styling */
     .stTextArea textarea {
         border-radius: 1.25rem !important;
@@ -387,146 +448,7 @@ st.markdown("""
         box-shadow: 0 6px 20px rgba(14, 165, 233, 0.3) !important;
     }
     
-    .stButton button[kind="primary"]:active {
-        transform: translateY(0) !important;
-    }
-    
-    /* Sidebar styling */
-    .sidebar .sidebar-content {
-        background: #f0f8ff;
-        border-right: 2px solid #0ea5e9;
-    }
-    
-    .sidebar-header {
-        background: #0ea5e9;
-        color: white;
-        padding: 1rem;
-        border-radius: 0.75rem;
-    }
-    
-    .sidebar .stMarkdown h2 {
-        color: var(--neutral-800) !important;
-        font-size: 1.25rem !important;
-        margin-bottom: 1rem !important;
-    }
-    
-    .sidebar .stMarkdown h3 {
-        color: var(--neutral-700) !important;
-        font-size: 0.95rem !important;
-        margin-top: 1.5rem !important;
-        margin-bottom: 0.75rem !important;
-    }
-    
-    .stRadio > label {
-        font-size: 0.95rem !important;
-        color: var(--neutral-700) !important;
-    }
-    
-    .stRadio > div > label {
-        background: var(--neutral-50) !important;
-        border: 2px solid var(--neutral-200) !important;
-        border-radius: 0.75rem !important;
-        padding: 0.75rem 1rem !important;
-        margin: 0.5rem 0 !important;
-        transition: all 0.3s !important;
-    }
-    
-    .stRadio > div > label:hover {
-        border-color: var(--primary) !important;
-        background: var(--primary-light) !important;
-    }
-    
-    .stCheckbox > label {
-        color: var(--neutral-700) !important;
-        font-size: 0.95rem !important;
-    }
-    
-    .stSelectbox > div > div {
-        border: 2px solid var(--neutral-200) !important;
-        border-radius: 0.75rem !important;
-    }
-    
-    .stSuccess {
-        background: #dbeafe !important;
-        border: 1px solid #93c5fd !important;
-        border-radius: 0.75rem !important;
-    }
-    
-    .stError {
-        background: #fee2e2 !important;
-        border: 1px solid #fca5a5 !important;
-        border-radius: 0.75rem !important;
-    }
-    
-    .stWarning {
-        background: #fef3c7 !important;
-        border: 1px solid #fde047 !important;
-        border-radius: 0.75rem !important;
-    }
-    
-    .stInfo {
-        background: #dbeafe !important;
-        border: 1px solid #93c5fd !important;
-        border-radius: 0.75rem !important;
-    }
-    
-    .stMetric {
-        background: white !important;
-        padding: 1rem !important;
-        border-radius: 0.75rem !important;
-        border: 1px solid var(--neutral-200) !important;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
-    }
-    
-    .stMetric > div > div {
-        color: var(--neutral-700) !important;
-    }
-    
-    .stMetric > div > div > div > div {
-        color: var(--primary) !important;
-        font-weight: 700 !important;
-    }
-    
-    .streamlit-expanderHeader {
-        background: var(--neutral-50) !important;
-        border-radius: 0.75rem !important;
-        border: 1px solid var(--neutral-200) !important;
-        padding: 0.75rem 1rem !important;
-        transition: all 0.3s !important;
-    }
-    
-    .streamlit-expanderHeader:hover {
-        background: white !important;
-        border-color: var(--primary) !important;
-    }
-
-    [data-testid="stExpander"] .stMarkdown,
-    [data-testid="stExpander"] p,
-    [data-testid="stExpander"] span,
-    [data-testid="stExpander"] li {
-        color: #1f2937 !important;
-        font-size: 0.95rem !important;
-    }
-
-    [data-testid="stExpander"] .stText pre {
-        color: #1f2937 !important;
-        background: #f8fafc !important;
-        border: 1px solid #e5e7eb !important;
-        padding: 0.75rem 1rem !important;
-        border-radius: 0.75rem !important;
-        line-height: 1.5 !important;
-    }
-
-    [data-testid="stExpander"] strong {
-        color: #111827 !important;
-        font-weight: 600 !important;
-    }
-
-    [data-testid="stExpander"] hr {
-        border-color: #e5e7eb !important;
-        margin: 1rem 0 !important;
-    }
-    
+    /* Welcome screen */
     .welcome-screen {
         max-width: 700px;
         margin: 4rem auto;
@@ -577,6 +499,7 @@ st.markdown("""
         font-weight: 500;
     }
     
+    /* Typing indicator */
     .typing-indicator {
         display: inline-flex;
         gap: 0.3rem;
@@ -604,13 +527,7 @@ st.markdown("""
         30% { transform: translateY(-10px); }
     }
     
-    .streamlit-hr {
-        border: none !important;
-        height: 2px !important;
-        background: linear-gradient(90deg, transparent, var(--neutral-200), transparent) !important;
-        margin: 1.5rem 0 !important;
-    }
-    
+    /* Scrollbar */
     ::-webkit-scrollbar {
         width: 8px;
         height: 8px;
@@ -629,18 +546,7 @@ st.markdown("""
         background: var(--primary-dark) !important;
     }
     
-    .stMarkdown {
-        color: var(--neutral-800) !important;
-    }
-    
-    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
-        color: var(--neutral-800) !important;
-    }
-    
-    .stSpinner > div {
-        border-color: var(--primary) !important;
-    }
-    
+    /* Expander styling */
     [data-testid="stExpander"] * {
         color: #111827 !important;
         opacity: 1 !important;
@@ -682,7 +588,8 @@ def check_federated_health() -> Dict[str, Any]:
                 return {
                     "status": "ready",
                     "num_clients": data.get("num_clients", 0),
-                    "grid_status": data.get("flower_grid_status", "unknown")
+                    "grid_status": data.get("flower_grid_status", "unknown"),
+                    "data_sources": data.get("data_sources", [])
                 }
             else:
                 return {
@@ -700,6 +607,7 @@ def send_query(
     apply_privacy: bool = True,
     retriever_type: Optional[str] = None,
     use_federated: bool = False,
+    topic: str = "finance"
 ) -> Dict[str, Any]:
     """Send query to API"""
     try:
@@ -708,7 +616,8 @@ def send_query(
             "session_id": st.session_state.session_id,
             "apply_privacy": apply_privacy,
             "retriever_type": retriever_type,
-            "use_federated": use_federated
+            "use_federated": use_federated,
+            "topic": topic
         }
         
         endpoint = "/api/query/federated" if use_federated else "/api/query"
@@ -730,8 +639,107 @@ def send_query(
         return {"success": False, "error": str(e)}
 
 
+def display_thinking_state(state: str, num_clients: int = 0):
+    """Display AI thinking state"""
+    lang = st.session_state.language
+    
+    if state == "processing":
+        text = get_text("thinking_processing", lang)
+    elif state == "searching":
+        text = get_text("thinking_searching", lang)
+    elif state == "federated":
+        text = get_text("thinking_federated", lang).format(num_clients)
+    elif state == "privacy":
+        text = get_text("thinking_privacy", lang)
+    elif state == "generating":
+        text = get_text("thinking_generating", lang)
+    elif state == "finalizing":
+        text = get_text("thinking_finalizing", lang)
+    else:
+        text = state
+    
+    st.markdown(f"""
+    <div class="thinking-container">
+        <div class="thinking-title">{get_text("thinking_title", lang)}</div>
+        <div class="thinking-state">{text}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def display_masked_info(original: str, masked: str, pii_items: List[Dict]):
+    """Display comparison of original and masked text"""
+    lang = st.session_state.language
+    
+    if not pii_items:
+        st.info(get_text("privacy_no_pii", lang))
+        return
+    
+    # Highlight masked items in both texts
+    masked_display = masked
+    for item in pii_items:
+        entity_type = item.get("entity_type", "")
+        masked_display = masked_display.replace(
+            item.get("masked_value", ""),
+            f'<span class="masked-highlight">{item.get("masked_value", "")}</span>'
+        )
+    
+    st.markdown(f"""
+    <div class="masked-info-container">
+        <div style="font-weight: 700; margin-bottom: 0.75rem; color: #92400e;">
+            {get_text("privacy_masked_info", lang)}
+        </div>
+        <div class="masked-comparison">
+            <div class="masked-box">
+                <div class="masked-label">{get_text("privacy_original_text", lang)}</div>
+                <div class="masked-text">{html.escape(original[:200])}...</div>
+            </div>
+            <div class="masked-box">
+                <div class="masked-label">{get_text("privacy_masked_text", lang)}</div>
+                <div class="masked-text">{masked_display[:200]}...</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def display_fl_community(fed_health: Dict[str, Any]):
+    """Display Federated Learning community information"""
+    lang = st.session_state.language
+    
+    if fed_health["status"] != "ready":
+        return
+    
+    num_clients = fed_health.get("num_clients", 0)
+    data_sources = fed_health.get("data_sources", [])
+    
+    st.markdown(f"""
+    <div class="fl-community-card">
+        <div style="font-weight: 700; font-size: 1.1rem; margin-bottom: 0.75rem;">
+            {get_text("fl_community", lang)}
+        </div>
+        <div class="fl-stat">
+            <span class="fl-stat-label">{get_text("fl_participants", lang)}:</span>
+            <span class="fl-stat-value">{num_clients} {get_text("fl_active_nodes", lang)}</span>
+        </div>
+        <div class="fl-stat">
+            <span class="fl-stat-label">{get_text("fl_status", lang)}:</span>
+            <span class="fl-stat-value">✓ {get_text("fl_ready", lang)}</span>
+        </div>
+        <div class="fl-stat">
+            <span class="fl-stat-label">{get_text("fl_data_sources", lang)}:</span>
+            <span class="fl-stat-value">{len(data_sources)} sources</span>
+        </div>
+        <div class="fl-stat">
+            <span class="fl-stat-label">{get_text("fl_last_sync", lang)}:</span>
+            <span class="fl-stat-value">{datetime.now().strftime("%H:%M:%S")}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def display_message(role: str, content: str, metadata: Optional[Dict] = None, timestamp: str = None):
-    """Display a chat message with ChatGPT-style design (❌ không hiển thị giờ nữa)"""
+    """Display a chat message"""
+    lang = st.session_state.language
     
     # Avatar
     avatar_emoji = "👤" if role == "user" else "🤖"
@@ -741,22 +749,45 @@ def display_message(role: str, content: str, metadata: Optional[Dict] = None, ti
     # Privacy badge
     privacy_html = ""
     if metadata and metadata.get("privacy_applied"):
-        privacy_html = '<div class="privacy-badge protected">🔒 Privacy Protected</div>'
+        privacy_html = f'<div class="privacy-badge protected">{get_text("privacy_badge_protected", lang)}</div>'
     elif metadata and metadata.get("privacy_applied") is False and role == "assistant":
-        privacy_html = '<div class="privacy-badge warning">⚠️ No Privacy</div>'
+        privacy_html = f'<div class="privacy-badge warning">{get_text("privacy_badge_none", lang)}</div>'
 
-    # 🔥 BRUTE-FORCE: xoá mọi pattern rác liên quan message-time / </div>
+    # Clean content - Remove ALL HTML tags
     raw = content or ""
+    
+    # Remove all HTML tags (including nested ones)
+    # This regex removes <tag>...</tag> and self-closing tags
+    raw = re.sub(r'<[^>]+>', '', raw)
+    
+    # Remove common problematic patterns
+    raw = raw.replace("</div>", "")
+    raw = raw.replace("<div>", "")
+    raw = raw.replace("<div ", "")
+    raw = raw.replace("</div ", "")
     raw = raw.replace("</div>", "")
     raw = raw.replace("<div class=\"message-time\">", "")
     raw = raw.replace("<div class='message-time'>", "")
+    raw = raw.replace("<div class=\"message-time\"", "")
+    raw = raw.replace("<div class='message-time'", "")
+    
+    # Remove any remaining HTML entities that might be malformed
+    raw = raw.replace("&lt;", "<")
+    raw = raw.replace("&gt;", ">")
+    raw = raw.replace("&amp;", "&")
+    
+    # Strip whitespace
+    raw = raw.strip()
+    
+    # If content is empty or only contains HTML artifacts, skip
+    if not raw or raw in ["</div>", "<div>", "...", ""]:
+        raw = ""
 
-    # Escape nội dung → không render HTML/markdown
+    # Escape content properly
     safe_content = html.escape(raw)
     safe_content = safe_content.replace("`", "&#96;")
     safe_content = safe_content.replace("\n", "<br>")
 
-    # KHÔNG còn .message-time trong HTML
     st.markdown(f"""
     <div class="message {message_class}">
         <div class="avatar {avatar_class}">{avatar_emoji}</div>
@@ -769,23 +800,32 @@ def display_message(role: str, content: str, metadata: Optional[Dict] = None, ti
     
     # Privacy stats
     if metadata and metadata.get("privacy_stats") and role == "assistant":
-        with st.expander("🔍 Privacy Details"):
+        with st.expander(get_text("privacy_details", lang)):
             stats = metadata["privacy_stats"]
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("PII Detected", stats.get("pii_detected", 0))
+                st.metric(get_text("privacy_pii_detected", lang), stats.get("pii_detected", 0))
             with col2:
-                st.metric("Removed", stats.get("sentences_removed", 0))
+                st.metric(get_text("privacy_removed", lang), stats.get("sentences_removed", 0))
             with col3:
-                st.metric("PII Density", f"{stats.get('pii_density', 0):.1%}")
+                st.metric(get_text("privacy_density", lang), f"{stats.get('pii_density', 0):.1%}")
             with col4:
-                st.metric("Risk", f"{stats.get('average_risk', 0):.2f}")
+                st.metric(get_text("privacy_risk", lang), f"{stats.get('average_risk', 0):.2f}")
+            
+            # Show masked information if available
+            if stats.get("pii_items"):
+                st.divider()
+                display_masked_info(
+                    original=metadata.get("original_text", content),
+                    masked=content,
+                    pii_items=stats.get("pii_items", [])
+                )
     
     # Sources
     if metadata and metadata.get("source_nodes") and role == "assistant":
-        with st.expander("📄 Sources"):
+        with st.expander(get_text("sources", lang)):
             for i, node in enumerate(metadata["source_nodes"][:3], 1):
-                st.markdown(f"**Source {i}** (Score: {node.get('score', 0):.3f})")
+                st.markdown(f"**{get_text('source_number', lang).format(i, node.get('score', 0))}**")
                 src_text = html.escape(node.get("text", "")[:200]) + "..."
                 st.markdown(f"<pre>{src_text}</pre>", unsafe_allow_html=True)
                 if i < len(metadata["source_nodes"][:3]):
@@ -794,80 +834,115 @@ def display_message(role: str, content: str, metadata: Optional[Dict] = None, ti
 
 def sidebar_config():
     """Sidebar configuration"""
+    lang = st.session_state.language
+    
     with st.sidebar:
-        st.title("⚙️ Settings")
+        st.title(get_text("settings", lang))
         
-        st.subheader("API Status")
+        # Language Selection
+        st.subheader(get_text("language", lang))
+        language = st.selectbox(
+            get_text("select_language", lang),
+            options=["vi", "en"],
+            format_func=lambda x: "🇻🇳 Tiếng Việt" if x == "vi" else "🇬🇧 English",
+            index=0 if st.session_state.language == "vi" else 1,
+            key="language_selector"
+        )
+        if language != st.session_state.language:
+            st.session_state.language = language
+            st.rerun()
+        
+        st.divider()
+        
+        # Topic Selection
+        st.subheader(get_text("topic", lang))
+        topic_options = list(TOPIC_CONFIG.keys())
+        topic_labels = [f"{TOPIC_CONFIG[t]['icon']} {get_text(f'topic_{t}', lang)}" for t in topic_options]
+        
+        selected_topic_idx = topic_options.index(st.session_state.topic) if st.session_state.topic in topic_options else 0
+        selected_topic = st.selectbox(
+            get_text("select_topic", lang),
+            options=topic_options,
+            format_func=lambda x: f"{TOPIC_CONFIG[x]['icon']} {get_text(f'topic_{x}', lang)}",
+            index=selected_topic_idx,
+            key="topic_selector"
+        )
+        if selected_topic != st.session_state.topic:
+            st.session_state.topic = selected_topic
+            st.rerun()
+        
+        st.divider()
+        
+        # API Status
+        st.subheader(get_text("api_status", lang))
         health = check_api_health()
         
         if health["status"] == "healthy":
-            st.success("✅ API Online")
+            st.success(get_text("api_online", lang))
             data = health.get("data", {})
             if data.get("privacy_enabled"):
-                st.info("🔒 Privacy Enabled")
-            
-            if data.get("federated_ready"):
-                st.success(f"🌐 Federated Server: {data.get('num_clients', 0)} clients")
-            elif data.get("flower_grid_status") == "no_clients":
-                st.warning("🌐 Federated Server: Waiting for clients")
-            else:
-                st.info("🌐 Federated Server: Not connected")
-                
+                st.info(get_text("privacy_enabled", lang))
         elif health["status"] == "offline":
-            st.error("❌ API Offline")
-            st.warning("Start API:\n```bash\npython -m uvicorn api.main:app --port 8000\n```")
+            st.error(get_text("api_offline", lang))
+            st.warning(f"{get_text('api_start_command', lang)}\n```bash\npython -m uvicorn api.main:app --port 8000\n```")
         else:
             st.error(f"❌ {health.get('error')}")
         
         st.divider()
         
-        st.subheader("RAG Mode")
+        # RAG Mode
+        st.subheader(get_text("rag_mode", lang))
         rag_mode = st.radio(
-            "Select RAG mode:",
-            ["Single Machine", "Federated (Multi-Client)"],
-            help="Single: Fast, local. Federated: Slower but ensemble answer from multiple clients",
-            key="rag_mode_radio",   # 🔑 thêm key cho an toàn
+            get_text("rag_mode_select", lang),
+            [get_text("mode_single", lang), get_text("mode_federated", lang)],
+            help=get_text("federated_help", lang),
+            key="rag_mode_radio",
         )
-        use_federated = rag_mode == "Federated (Multi-Client)"
+        use_federated = get_text("mode_federated", lang) in rag_mode
 
         if use_federated:
             fed_health = check_federated_health()
             if fed_health["status"] == "ready":
-                st.success(f"🌐 Federated Ready: {fed_health['num_clients']} clients connected ✓")
+                st.success(get_text("mode_federated_info", lang).format(fed_health['num_clients']))
+                # Display FL Community Card
+                display_fl_community(fed_health)
             elif fed_health["status"] == "waiting_clients":
-                st.warning(f"🌐 Server waiting for clients... ({fed_health['num_clients']} connected)")
-                st.info("Start clients with: `python -m flwr run . --node-config '{\"node-id\": 1}'`")
+                st.warning(get_text("mode_federated_waiting", lang).format(fed_health['num_clients']))
             else:
-                st.error("🌐 Federated Server offline")
-                st.error("Start server with: `python -m flwr run .`")
+                st.error(get_text("mode_federated_offline", lang))
         else:
-            st.info("🖥️ Single Mode: Queries local RAG only")
+            st.info(get_text("mode_single_info", lang))
         
         st.divider()
         
-        st.subheader("Privacy Settings")
+        # Privacy Settings
+        st.subheader(get_text("privacy_settings", lang))
         apply_privacy = st.checkbox(
-            "Enable Privacy Protection",
+            get_text("privacy_enable", lang),
             value=True,
-            help="Protect PII in responses"
+            help=get_text("privacy_help", lang)
         )
         
         st.divider()
         
-        st.subheader("Retriever")
-        st.info("🚧 MOCK Mode: All queries → default")
+        # Retriever
+        st.subheader(get_text("retriever", lang))
+        topic_config = TOPIC_CONFIG.get(st.session_state.topic, TOPIC_CONFIG["general"])
+        retriever_options = topic_config["retrievers"]
+        
         retriever_type = st.selectbox(
-            "Type",
-            ["default", "financial", "general", "technical", "legal"]
+            get_text("retriever_type", lang),
+            ["default"] + retriever_options
         )
         
         st.divider()
         
-        st.subheader("Chat History")
+        # Chat History
+        st.subheader(get_text("chat_history", lang))
         message_count = len([m for m in st.session_state.messages if m["role"] == "user"])
-        st.write(f"📝 {message_count} messages")
+        st.write(get_text("messages_count", lang).format(message_count))
         
-        if st.button("🗑️ Clear History", use_container_width=True):
+        if st.button(get_text("clear_history", lang), use_container_width=True):
             st.session_state.messages = []
             st.rerun()
     
@@ -875,29 +950,33 @@ def sidebar_config():
         "apply_privacy": apply_privacy,
         "retriever_type": retriever_type if retriever_type != "default" else None,
         "api_healthy": health["status"] == "healthy",
-        "use_federated": use_federated
+        "use_federated": use_federated,
+        "fed_health": check_federated_health() if use_federated else None
     }
 
 
 def show_welcome_screen():
     """Show welcome screen with example questions"""
-    st.markdown("""
+    lang = st.session_state.language
+    topic = st.session_state.topic
+    topic_config = TOPIC_CONFIG.get(topic, TOPIC_CONFIG["general"])
+    
+    welcome_msg_key = f"welcome_{topic}"
+    welcome_msg = get_text(welcome_msg_key, lang)
+    
+    st.markdown(f"""
     <div class="welcome-screen">
-        <div class="welcome-title">💰 Financial Q&A Chatbot</div>
+        <div class="welcome-title">{topic_config['icon']} {get_text("welcome_title", lang)}</div>
         <div class="welcome-subtitle">
-            Ask me anything about financial reports, earnings, and market data
+            {get_text("welcome_subtitle", lang).format(welcome_msg)}
         </div>
     </div>
     """, unsafe_allow_html=True)
     
-    st.markdown("### 💡 Try asking:")
+    st.markdown(f"### {get_text('try_asking', lang)}")
     
-    examples = [
-        {"icon": "📊", "text": "What is 3M's revenue in 2019?"},
-        {"icon": "👔", "text": "Who is the CEO of Apple?"},
-        {"icon": "💹", "text": "Show me Tesla's profit margin"},
-        {"icon": "📈", "text": "What are the main products of Microsoft?"},
-    ]
+    # Get topic-specific examples
+    examples = get_topic_examples(topic, lang)
     
     cols = st.columns(2)
     for idx, example in enumerate(examples):
@@ -912,76 +991,31 @@ def show_welcome_screen():
 
 def main():
     """Main application"""
+    # Initialize session state
+    init_session_state()
+    lang = st.session_state.language
     
-    # Inject JavaScript mạnh hơn để restore sidebar
-    st.components.v1.html("""
-    <script>
-        window.parent.document.addEventListener('DOMContentLoaded', function() {
-            function forceSidebarVisible() {
-                const sidebar = window.parent.document.querySelector('[data-testid="stSidebar"]');
-                const collapseBtn = window.parent.document.querySelector('button[data-testid="collapseSidebarButton"]');
-                
-                if (sidebar) {
-                    sidebar.style.display = '';
-                    sidebar.style.visibility = 'visible';
-                    sidebar.style.opacity = '1';
-                    sidebar.setAttribute('aria-expanded', 'true');
-                    sidebar.classList.remove('st-emotion-cache-hidden');
-                }
-                
-                if (collapseBtn) {
-                    collapseBtn.style.display = 'flex';
-                    collapseBtn.style.visibility = 'visible';
-                    collapseBtn.style.opacity = '1';
-                }
-            }
-            
-            // Chạy ngay và lặp lại
-            forceSidebarVisible();
-            setInterval(forceSidebarVisible, 500);
-            
-            // Tạo nút restore
-            const btn = window.parent.document.createElement('button');
-            btn.innerHTML = '☰';
-            btn.style.cssText = 'position: fixed; top: 1rem; left: 1rem; z-index: 9999; background: #0ea5e9; color: white; border: none; border-radius: 50%; width: 45px; height: 45px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-size: 1.5rem; font-weight: bold; transition: all 0.3s;';
-            btn.onmouseover = () => { btn.style.background = '#0284c7'; btn.style.transform = 'scale(1.1)'; };
-            btn.onmouseout = () => { btn.style.background = '#0ea5e9'; btn.style.transform = 'scale(1)'; };
-            btn.onclick = forceSidebarVisible;
-            
-            // Xóa nút cũ nếu có
-            const oldBtn = window.parent.document.querySelector('.sidebar-restore-button');
-            if (oldBtn) oldBtn.remove();
-            
-            btn.className = 'sidebar-restore-button';
-            window.parent.document.body.appendChild(btn);
-        });
-    </script>
-    """, height=0)
-    
-    # Init session
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    
-    if "session_id" not in st.session_state:
-        st.session_state.session_id = f"{DEFAULT_SESSION_ID}_{int(time.time())}"
-
-    # 🧹 DỌN RÁC: xoá mọi message có </div> hoặc message-time
+    # Clean messages - Remove messages with HTML artifacts
     cleaned_messages = []
     for m in st.session_state.messages:
         content = m.get("content", "")
-        if "</div>" in content or 'class="message-time"' in content:
+        # Skip messages that are only HTML tags or artifacts
+        cleaned_content = re.sub(r'<[^>]+>', '', content).strip()
+        if not cleaned_content or cleaned_content in ["</div>", "<div>", "...", ""]:
             continue
+        # Update content with cleaned version
+        m["content"] = cleaned_content
         cleaned_messages.append(m)
     st.session_state.messages = cleaned_messages
 
-    # ⭕️ GỌI SIDEBAR CHỈ 1 LẦN
+    # Sidebar configuration
     config = sidebar_config()
     
     # Welcome screen
     if len(st.session_state.messages) == 0:
         show_welcome_screen()
     
-    # Hiển thị history
+    # Display message history
     for message in st.session_state.messages:
         display_message(
             role=message["role"],
@@ -996,7 +1030,7 @@ def main():
         with st.form(key="chat_form", clear_on_submit=True):
             user_input = st.text_area(
                 "Message",
-                placeholder="Type your question here... (Shift+Enter for new line)",
+                placeholder=get_text("message_placeholder", lang),
                 label_visibility="collapsed",
                 height=80,
                 key="chat_input"
@@ -1004,12 +1038,12 @@ def main():
             
             col1, col2 = st.columns([1, 5])
             with col1:
-                submit = st.form_submit_button("Send 🚀", type="primary", use_container_width=True)
+                submit = st.form_submit_button(get_text("send_button", lang), type="primary", use_container_width=True)
     
-    # Xử lý khi user gửi
+    # Handle user submission
     if submit and user_input:
         if not config["api_healthy"]:
-            st.error("❌ API is not available. Please start the FastAPI server.")
+            st.error(get_text("error_api_unavailable", lang))
             return
         
         st.session_state.messages.append({
@@ -1020,42 +1054,69 @@ def main():
         
         st.rerun()
     
-    # Call backend nếu last message là user
+    # Call backend if last message is user
     if len(st.session_state.messages) > 0 and st.session_state.messages[-1]["role"] == "user":
-        with st.spinner(""):
-            st.markdown("""
-            <div class="message bot">
-                <div class="avatar bot">🤖</div>
-                <div class="message-content">
-                    <div class="message-bubble">
-                        <div class="typing-indicator">
-                            <div class="typing-dot"></div>
-                            <div class="typing-dot"></div>
-                            <div class="typing-dot"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        # Show thinking states
+        thinking_container = st.empty()
+        
+        with thinking_container:
+            # Stage 1: Processing
+            display_thinking_state("processing")
+            time.sleep(0.5)
+            
+            # Stage 2: Searching
+            display_thinking_state("searching")
+            time.sleep(0.5)
+            
+            # Stage 3: Federated (if applicable)
+            if config.get("use_federated") and config.get("fed_health"):
+                num_clients = config["fed_health"].get("num_clients", 0)
+                display_thinking_state("federated", num_clients)
+                time.sleep(0.5)
+            
+            # Stage 4: Privacy protection
+            if config["apply_privacy"]:
+                display_thinking_state("privacy")
+                time.sleep(0.5)
+            
+            # Stage 5: Generating
+            display_thinking_state("generating")
             
             result = send_query(
                 question=st.session_state.messages[-1]["content"],
                 apply_privacy=config["apply_privacy"],
                 retriever_type=config["retriever_type"],
-                use_federated=config.get("use_federated", False)
+                use_federated=config.get("use_federated", False),
+                topic=st.session_state.topic
             )
+            
+            # Stage 6: Finalizing
+            display_thinking_state("finalizing")
+            time.sleep(0.3)
+        
+        # Clear thinking states
+        thinking_container.empty()
         
         if result["success"]:
             data = result["data"]
             answer = data.get("answer", "").strip()
             
-            if answer == "</div>":
-                answer = ""
+            # Clean HTML tags from answer
+            if answer:
+                # Remove all HTML tags
+                answer = re.sub(r'<[^>]+>', '', answer)
+                # Remove common problematic patterns
+                answer = answer.replace("</div>", "").replace("<div>", "").strip()
+                # Remove HTML entities
+                answer = answer.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+                answer = html.unescape(answer)  # Decode any remaining entities
+                answer = answer.strip()
             
-            if not answer or answer == "...":
+            # Skip if answer is empty or only contains HTML artifacts
+            if not answer or answer in ["</div>", "<div>", "...", ""]:
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": f"❌ No answer generated. Mode: {data.get('routed_to', 'unknown')}",
+                    "content": get_text("error_no_answer", lang).format(data.get('routed_to', 'unknown')),
                     "metadata": {
                         "privacy_applied": False,
                         "privacy_stats": None,
@@ -1072,19 +1133,19 @@ def main():
                         "privacy_applied": data.get("privacy_applied", False),
                         "privacy_stats": data.get("privacy_stats"),
                         "source_nodes": data.get("source_nodes", []),
-                        "response_time": data.get("response_time", 0)
+                        "response_time": data.get("response_time", 0),
+                        "original_text": data.get("original_answer", answer)
                     },
                     "timestamp": datetime.now().isoformat()
                 })
         else:
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": f"❌ Error: {result['error']}",
+                "content": get_text("error_prefix", lang).format(result['error']),
                 "timestamp": datetime.now().isoformat()
             })
         
         st.rerun()
-
 
 
 if __name__ == "__main__":
