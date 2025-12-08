@@ -124,9 +124,63 @@ st.markdown("""
         border-color: #e5e7eb !important;
     }
 
-    /* Ẩn nút thu gọn sidebar */
+    /* Hiển thị và style nút thu gọn sidebar */
     button[data-testid="collapseSidebarButton"] {
-        display: none !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: var(--primary) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 50% !important;
+        width: 36px !important;
+        height: 36px !important;
+        position: fixed !important;
+        top: 1rem !important;
+        left: 1rem !important;
+        z-index: 999 !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+        transition: all 0.3s ease !important;
+        cursor: pointer !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+    }
+    
+    button[data-testid="collapseSidebarButton"]:hover {
+        background: var(--primary-dark) !important;
+        transform: scale(1.1) !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
+    }
+    
+    /* Đảm bảo sidebar luôn có thể hiển thị */
+    [data-testid="stSidebar"] {
+        visibility: visible !important;
+    }
+    
+    /* Nút khôi phục sidebar (backup) */
+    .sidebar-restore-btn {
+        position: fixed !important;
+        top: 1rem !important;
+        left: 1rem !important;
+        z-index: 1000 !important;
+        background: var(--primary) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 50% !important;
+        width: 40px !important;
+        height: 40px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        font-size: 1.2rem !important;
+        cursor: pointer !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .sidebar-restore-btn:hover {
+        background: var(--primary-dark) !important;
+        transform: scale(1.1) !important;
     }
 
     /* 🎨 BLUE THEME */
@@ -858,6 +912,51 @@ def show_welcome_screen():
 
 def main():
     """Main application"""
+    
+    # Inject JavaScript mạnh hơn để restore sidebar
+    st.components.v1.html("""
+    <script>
+        window.parent.document.addEventListener('DOMContentLoaded', function() {
+            function forceSidebarVisible() {
+                const sidebar = window.parent.document.querySelector('[data-testid="stSidebar"]');
+                const collapseBtn = window.parent.document.querySelector('button[data-testid="collapseSidebarButton"]');
+                
+                if (sidebar) {
+                    sidebar.style.display = '';
+                    sidebar.style.visibility = 'visible';
+                    sidebar.style.opacity = '1';
+                    sidebar.setAttribute('aria-expanded', 'true');
+                    sidebar.classList.remove('st-emotion-cache-hidden');
+                }
+                
+                if (collapseBtn) {
+                    collapseBtn.style.display = 'flex';
+                    collapseBtn.style.visibility = 'visible';
+                    collapseBtn.style.opacity = '1';
+                }
+            }
+            
+            // Chạy ngay và lặp lại
+            forceSidebarVisible();
+            setInterval(forceSidebarVisible, 500);
+            
+            // Tạo nút restore
+            const btn = window.parent.document.createElement('button');
+            btn.innerHTML = '☰';
+            btn.style.cssText = 'position: fixed; top: 1rem; left: 1rem; z-index: 9999; background: #0ea5e9; color: white; border: none; border-radius: 50%; width: 45px; height: 45px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-size: 1.5rem; font-weight: bold; transition: all 0.3s;';
+            btn.onmouseover = () => { btn.style.background = '#0284c7'; btn.style.transform = 'scale(1.1)'; };
+            btn.onmouseout = () => { btn.style.background = '#0ea5e9'; btn.style.transform = 'scale(1)'; };
+            btn.onclick = forceSidebarVisible;
+            
+            // Xóa nút cũ nếu có
+            const oldBtn = window.parent.document.querySelector('.sidebar-restore-button');
+            if (oldBtn) oldBtn.remove();
+            
+            btn.className = 'sidebar-restore-button';
+            window.parent.document.body.appendChild(btn);
+        });
+    </script>
+    """, height=0)
     
     # Init session
     if "messages" not in st.session_state:

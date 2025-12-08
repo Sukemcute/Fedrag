@@ -2,7 +2,20 @@
 __pycache__/
 *.py[cod]
 *$py.class
+finsaferag/finsaferag/fedrag
+finsaferag/finsaferag/lib
+finsaferag/finsaferag/lib64
+finsaferag/finsaferag/parts
+finsaferag/finsaferag/sdist
+finsaferag/finsaferag/var
+finsaferag/finsaferag/wheels
+finsaferag/finsaferag/share/python-wheels
+finsaferag/finsaferag/*.egg-info
+finsaferag/finsaferag/.installed.cfg
+finsaferag/finsaferag/*.egg
+finsaferag/finsaferag/MANIFEST
 
+*.md
 # Flower directory
 .flwr
 

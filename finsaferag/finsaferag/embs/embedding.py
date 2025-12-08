@@ -8,36 +8,70 @@ import os
 def get_embedding(state_dict_path):    
     print("embedding_path: ", state_dict_path)
 
+    # Handle relative paths - convert to absolute if it's a local path
+    model_path = state_dict_path
+    
+    # Check if it's a relative path (not starting with / and not a HuggingFace model ID with /)
+    if not os.path.isabs(state_dict_path) and not state_dict_path.startswith("http"):
+        # Try to resolve relative path from project root (where config.toml is)
+        # Get the directory containing this file (embs/)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # Go up one level to get project root (finsaferag/finsaferag/)
+        project_root = os.path.dirname(current_dir)
+        # Try absolute path
+        absolute_path = os.path.join(project_root, state_dict_path)
+        if os.path.exists(absolute_path) or os.path.isdir(absolute_path):
+            model_path = os.path.abspath(absolute_path)
+            print(f"✓ Resolved relative path to: {model_path}")
+        elif os.path.exists(state_dict_path):
+            # Path exists as-is (relative to current working directory)
+            model_path = os.path.abspath(state_dict_path)
+            print(f"✓ Found model at relative path: {model_path}")
+        else:
+            # Assume it's a HuggingFace model ID
+            print(f"⚠️  Path not found, treating as HuggingFace model ID: {state_dict_path}")
+            model_path = state_dict_path
+    elif os.path.isabs(state_dict_path):
+        # Absolute path - check if exists
+        if os.path.exists(state_dict_path) or os.path.isdir(state_dict_path):
+            print(f"✓ Found model at absolute path: {state_dict_path}")
+        else:
+            print(f"⚠️  Absolute path not found: {state_dict_path}")
+            print(f"⚠️  Trying as HuggingFace model ID or falling back to default")
+            # Try as-is first, will fallback in exception handler
+            model_path = state_dict_path
+
     # Determine device
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device for embeddings: {device}")
 
     # Try multiple approaches to ensure device placement
-    # Approach 1: Try with model_kwargs (if supported)
+    # Approach 1: Try with device parameter (most compatible)
     try:
         embeddings = HuggingFaceEmbedding(
-            model_name=state_dict_path,
-            model_kwargs={"device_map": "auto", "torch_dtype": torch.float16} if torch.cuda.is_available() else {},
-            # embed_batch_size=128,
+            model_name=model_path,
+            device=device,
         )
-        print("Created HuggingFaceEmbedding with model_kwargs")
-    except (TypeError, ValueError) as e:
-        print(f"model_kwargs approach failed: {e}, trying alternative...")
-        # Approach 2: Try with device parameter
+        print("✓ Created HuggingFaceEmbedding with device parameter")
+    except (TypeError, ValueError, Exception) as e:
+        print(f"Device parameter approach failed: {e}, trying without device...")
+        # Approach 2: Create without device, then move manually
         try:
             embeddings = HuggingFaceEmbedding(
-                model_name=state_dict_path,
-                device=device,
-                # embed_batch_size=128,
+                model_name=model_path,
             )
-            print("Created HuggingFaceEmbedding with device parameter")
-        except TypeError:
-            # Approach 3: Create without device, then move manually
-            embeddings = HuggingFaceEmbedding(
-                model_name=state_dict_path,
-                # embed_batch_size=128,
-            )
-            print("Created HuggingFaceEmbedding without device parameter")
+            print("✓ Created HuggingFaceEmbedding without device parameter")
+        except Exception as e2:
+            print(f"❌ Failed to create HuggingFaceEmbedding: {e2}")
+            # Last resort: use default model
+            print("⚠️  Falling back to default model: BAAI/bge-base-en")
+            try:
+                embeddings = HuggingFaceEmbedding(
+                    model_name="BAAI/bge-base-en",
+                )
+                print("✓ Created default HuggingFaceEmbedding")
+            except Exception as e3:
+                raise RuntimeError(f"Failed to load any embedding model. Last error: {e3}")
     
     # Ensure the underlying model is on the correct device
     # HuggingFaceEmbedding wraps a model, try different attribute names
