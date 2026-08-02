@@ -193,3 +193,13 @@ finsaferag/finsaferag/data/rag_corpus.json
 RAGTest/data/.ipynb_checkpoints/documents-checkpoint.json
 finsaferag/finsaferag/config.toml
 finsaferag/finsaferag/config.local.toml
+
+# Understand-Anything plugin data
+.ua/
+.understand-anything/
+
+# Ray runtime session logs and scratch directories
+**/.ray/
+
+# PII test outputs / temporary text files
+finsaferag/finsaferag/QUICK_PII_TEST.txt

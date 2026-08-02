@@ -58,6 +58,46 @@ TOPIC_CONFIG = {
 }
 
 
+def _clean_html_text(text: str) -> str:
+    """Remove HTML tags/artifacts and return cleaned plain text (may be empty)."""
+    if not text:
+        return ""
+    
+    raw = str(text)
+    
+    # Step 1: Remove ALL HTML tags (multiple passes to catch nested)
+    for _ in range(3):  # Multiple passes for nested tags
+        raw = re.sub(r'<[^>]*>', '', raw)
+    
+    # Step 2: Remove specific problematic patterns
+    patterns_to_remove = [
+        "</div>", "<div>", "<div ", "</div ", 
+        "<div class=\"message-time\">", "<div class='message-time'>",
+        "<div class=\"message-time\"", "<div class='message-time'",
+        "<span>", "</span>", "<p>", "</p>",
+        "<br>", "<br/>", "<br />",
+    ]
+    for pattern in patterns_to_remove:
+        raw = raw.replace(pattern, "")
+    
+    # Step 3: Decode HTML entities
+    raw = raw.replace("&lt;", "").replace("&gt;", "")
+    raw = raw.replace("&amp;", "&").replace("&nbsp;", " ")
+    raw = raw.replace("&#96;", "`")
+    
+    # Step 4: Try html.unescape to catch any remaining entities
+    try:
+        raw = html.unescape(raw)
+    except:
+        pass
+    
+    # Step 5: Clean whitespace
+    raw = " ".join(raw.split())  # Normalize whitespace
+    raw = raw.strip()
+    
+    return raw
+
+
 def init_session_state():
     """Initialize session state variables"""
     if "messages" not in st.session_state:
@@ -74,6 +114,16 @@ def init_session_state():
     
     if "thinking_state" not in st.session_state:
         st.session_state.thinking_state = None
+    
+    # AUTO-CLEAN: Force clean all existing messages on init
+    if "messages" in st.session_state and st.session_state.messages:
+        cleaned = []
+        for m in st.session_state.messages:
+            content = _clean_html_text(m.get("content", ""))
+            if content and content not in ["</div>", "<div>", "div", "/div", "...", "."]:
+                m["content"] = content
+                cleaned.append(m)
+        st.session_state.messages = cleaned
 
 
 # Page configuration
@@ -754,34 +804,11 @@ def display_message(role: str, content: str, metadata: Optional[Dict] = None, ti
         privacy_html = f'<div class="privacy-badge warning">{get_text("privacy_badge_none", lang)}</div>'
 
     # Clean content - Remove ALL HTML tags
-    raw = content or ""
-    
-    # Remove all HTML tags (including nested ones)
-    # This regex removes <tag>...</tag> and self-closing tags
-    raw = re.sub(r'<[^>]+>', '', raw)
-    
-    # Remove common problematic patterns
-    raw = raw.replace("</div>", "")
-    raw = raw.replace("<div>", "")
-    raw = raw.replace("<div ", "")
-    raw = raw.replace("</div ", "")
-    raw = raw.replace("</div>", "")
-    raw = raw.replace("<div class=\"message-time\">", "")
-    raw = raw.replace("<div class='message-time'>", "")
-    raw = raw.replace("<div class=\"message-time\"", "")
-    raw = raw.replace("<div class='message-time'", "")
-    
-    # Remove any remaining HTML entities that might be malformed
-    raw = raw.replace("&lt;", "<")
-    raw = raw.replace("&gt;", ">")
-    raw = raw.replace("&amp;", "&")
-    
-    # Strip whitespace
-    raw = raw.strip()
+    raw = _clean_html_text(content or "")
     
     # If content is empty or only contains HTML artifacts, skip
     if not raw or raw in ["</div>", "<div>", "...", ""]:
-        raw = ""
+        return
 
     # Escape content properly
     safe_content = html.escape(raw)
@@ -942,9 +969,28 @@ def sidebar_config():
         message_count = len([m for m in st.session_state.messages if m["role"] == "user"])
         st.write(get_text("messages_count", lang).format(message_count))
         
-        if st.button(get_text("clear_history", lang), use_container_width=True):
-            st.session_state.messages = []
-            st.rerun()
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("🗑️ Clear", use_container_width=True, help="Clear all chat history"):
+                st.session_state.messages = []
+                st.rerun()
+        with col2:
+            if st.button("🧹 Clean", use_container_width=True, help="Remove HTML tags from messages"):
+                # Force clean all messages
+                cleaned = []
+                for m in st.session_state.messages:
+                    cleaned_content = _clean_html_text(m.get("content", ""))
+                    if cleaned_content and cleaned_content not in ["</div>", "<div>", "div", "/div"]:
+                        m["content"] = cleaned_content
+                        cleaned.append(m)
+                st.session_state.messages = cleaned
+                st.success("✓ HTML cleaned!")
+                st.rerun()
+        with col3:
+            if st.button("🔄 Reload", use_container_width=True, help="Force reload app"):
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.rerun()
     
     return {
         "apply_privacy": apply_privacy,
@@ -995,17 +1041,26 @@ def main():
     init_session_state()
     lang = st.session_state.language
     
-    # Clean messages - Remove messages with HTML artifacts
+    # AGGRESSIVE Clean messages - Remove ALL HTML artifacts
     cleaned_messages = []
     for m in st.session_state.messages:
-        content = m.get("content", "")
-        # Skip messages that are only HTML tags or artifacts
-        cleaned_content = re.sub(r'<[^>]+>', '', content).strip()
-        if not cleaned_content or cleaned_content in ["</div>", "<div>", "...", ""]:
+        original_content = m.get("content", "")
+        
+        # Clean content aggressively
+        cleaned_content = _clean_html_text(original_content)
+        
+        # Skip if content is empty, only whitespace, or HTML artifact
+        if not cleaned_content:
             continue
-        # Update content with cleaned version
+        if cleaned_content in ["</div>", "<div>", "div", "/div", "...", ".", ""]:
+            continue
+        if len(cleaned_content) < 2:  # Too short, likely artifact
+            continue
+        
+        # Update message with cleaned content
         m["content"] = cleaned_content
         cleaned_messages.append(m)
+    
     st.session_state.messages = cleaned_messages
 
     # Sidebar configuration
@@ -1015,11 +1070,25 @@ def main():
     if len(st.session_state.messages) == 0:
         show_welcome_screen()
     
+    # Check for HTML artifacts WARNING + DEBUG
+    html_messages = []
+    for idx, m in enumerate(st.session_state.messages):
+        content = m.get("content", "")
+        if "</div>" in content or "<div" in content.lower():
+            html_messages.append((idx, m["role"], content[:80]))
+    
+    if html_messages:
+        st.error("🐛 **DEBUG: HTML tags detected in messages!**", icon="🚨")
+        with st.expander("🔍 View problematic messages (Debug)"):
+            for idx, role, preview in html_messages:
+                st.code(f"Message #{idx} ({role}): {preview}...")
+        st.warning("👉 Click **🧹 Clean** button in sidebar → Chat History to fix", icon="⚠️")
+    
     # Display message history
     for message in st.session_state.messages:
         display_message(
             role=message["role"],
-            content=message["content"],
+            content=_clean_html_text(message["content"]),
             metadata=message.get("metadata"),
             timestamp=message.get("timestamp")
         )
@@ -1046,11 +1115,13 @@ def main():
             st.error(get_text("error_api_unavailable", lang))
             return
         
-        st.session_state.messages.append({
-            "role": "user",
-            "content": user_input,
-            "timestamp": datetime.now().isoformat()
-        })
+        clean_user = _clean_html_text(user_input)
+        if clean_user:
+            st.session_state.messages.append({
+                "role": "user",
+                "content": clean_user,
+                "timestamp": datetime.now().isoformat()
+            })
         
         st.rerun()
     
@@ -1099,21 +1170,32 @@ def main():
         
         if result["success"]:
             data = result["data"]
-            answer = data.get("answer", "").strip()
+            answer_raw = data.get("answer", "").strip()
             
-            # Clean HTML tags from answer
+            # DEBUG: Log raw answer if contains HTML
+            if "</div>" in answer_raw or "<div" in answer_raw.lower():
+                st.warning(f"⚠️ DEBUG: Backend returned HTML in answer!", icon="🐛")
+                with st.expander("🔍 View raw response"):
+                    st.code(f"Raw answer (first 300 chars):\n{answer_raw[:300]}")
+            
+            # AGGRESSIVE Clean HTML tags from answer
+            answer = _clean_html_text(answer_raw)
+            
+            # Additional safety check - decode any entities
             if answer:
-                # Remove all HTML tags
-                answer = re.sub(r'<[^>]+>', '', answer)
-                # Remove common problematic patterns
-                answer = answer.replace("</div>", "").replace("<div>", "").strip()
-                # Remove HTML entities
-                answer = answer.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
-                answer = html.unescape(answer)  # Decode any remaining entities
+                try:
+                    answer = html.unescape(answer)
+                except:
+                    pass
                 answer = answer.strip()
             
-            # Skip if answer is empty or only contains HTML artifacts
-            if not answer or answer in ["</div>", "<div>", "...", ""]:
+            # Final verification
+            if "</div>" in answer or "<div" in answer.lower():
+                st.error("❌ HTML still present after cleaning! This is a bug.", icon="🚨")
+                st.code(f"After cleaning: {answer[:200]}")
+            
+            # Skip if answer is empty or only contains HTML artifacts  
+            if not answer or answer in ["</div>", "<div>", "div", "/div", "...", ".", ""]:
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": get_text("error_no_answer", lang).format(data.get('routed_to', 'unknown')),

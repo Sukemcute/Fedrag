@@ -1,5 +1,14 @@
 """fedrag: A Flower Federated RAG Server (inference only)."""
 
+import os
+import sys
+
+# FIX Ray path issues with spaces - MUST be set BEFORE any imports
+os.environ.setdefault("RAY_SCRATCH_DIR", os.path.join(os.getcwd(), ".ray"))
+os.environ.setdefault("RAY_TMPDIR", os.path.join(os.getcwd(), ".ray"))
+os.environ.setdefault("RAY_OBJECT_STORE_ALLOW_SLOW_STORAGE", "1")
+os.makedirs(os.environ["RAY_SCRATCH_DIR"], exist_ok=True)
+
 import hashlib
 import logging
 import numpy as np
@@ -17,6 +26,8 @@ from config import Config
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
+
+log.info(f"✓ Ray scratch dir: {os.environ['RAY_SCRATCH_DIR']}")
 
 
 # -------------------------------------------------------
@@ -201,7 +212,15 @@ def main(grid: Grid, context: Context) -> None:
     fastapi_thread.start()
     log.info("🌐 FastAPI started inside Flower process")
     
+    # Wait a moment for FastAPI to initialize
     import time
+    time.sleep(2)
+    
+    # ⭐ CRITICAL: Log message that start_chatbot.sh waits for
+    log.info("=" * 60)
+    log.info("✅ Federated RAG Server Ready!")
+    log.info("=" * 60)
+    
     while True:
         time.sleep(1)
 

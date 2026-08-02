@@ -11,7 +11,8 @@ import os
 import logging
 from typing import Dict, Any
 
-from finsaferag.config import Config
+# Use local config module; avoid package path to prevent import errors
+from config import Config
 from embs.embedding import get_embedding
 from llms.llm import get_llm
 from index import get_index

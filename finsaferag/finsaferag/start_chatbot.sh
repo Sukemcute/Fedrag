@@ -31,6 +31,14 @@ mkdir -p logs
 echo "✓ Logs directory ready"
 echo ""
 
+# FIX: Ray path issues with spaces (CRITICAL for path: "AI privace")
+export RAY_SCRATCH_DIR="$SCRIPT_DIR/.ray"
+export RAY_TMPDIR="$SCRIPT_DIR/.ray"
+export RAY_OBJECT_STORE_ALLOW_SLOW_STORAGE=1
+mkdir -p "$RAY_SCRATCH_DIR"
+echo "✓ Ray scratch dir: $RAY_SCRATCH_DIR"
+echo ""
+
 FLOWER_PID=""
 STREAMLIT_PID=""
 
@@ -51,6 +59,7 @@ cleanup() {
 
     pkill -f "flwr run" 2>/dev/null || true
     pkill -f "streamlit" 2>/dev/null || true
+    pkill -f "uvicorn" 2>/dev/null || true
 
     echo ""
     echo "✓ All services stopped"
@@ -77,14 +86,27 @@ max_wait=40
 waited=0
 
 while [ $waited -lt $max_wait ]; do
-    if grep -q "Federated RAG bridge initialized\|Server ready" logs/flower.log 2>/dev/null; then
-        echo "✓ Flower ready!"
+    # Check for server ready message (from server_app.py)
+    if grep -q "Federated RAG Server Ready\|Server Ready\|FastAPI started" logs/flower.log 2>/dev/null; then
+        echo "✓ Flower & FastAPI ready!"
         sleep 2
         break
     fi
+    
+    # Also check if process is still alive
+    if ! kill -0 "$FLOWER_PID" 2>/dev/null; then
+        echo "❌ Flower process died! Check logs/flower.log"
+        exit 1
+    fi
+    
     sleep 1
     ((waited++))
 done
+
+if [ $waited -ge $max_wait ]; then
+    echo "⚠️  Timeout waiting for server, but continuing..."
+    echo "   Check logs/flower.log for details"
+fi
 
 echo ""
 
